@@ -8,6 +8,7 @@
 # for python that we could use instead.  We cannot use readline directly
 # due to its C and Unix dependency.
 import warnings
+import copy
 
 # local
 from x84.bbs.ansiwin import AnsiWindow, GLYPHSETS
@@ -15,11 +16,11 @@ from x84.bbs.session import getterminal
 from x84.bbs.output import echo
 
 #: default command-key mapping.
-PC_KEYSET = {'refresh': [unichr(12), ],
-             'backspace': [unichr(8), unichr(127), ],
-             'backword': [unichr(23), ],
+PC_KEYSET = {'refresh': [chr(12), ],
+             'backspace': [chr(8), chr(127), ],
+             'backword': [chr(23), ],
              'enter': [u'\r', ],
-             'exit': [unichr(27), ], }
+             'exit': [chr(27), ], }
 
 
 class LineEditor(object):
@@ -52,12 +53,12 @@ class LineEditor(object):
         self.content = content or u''
         self.hidden = hidden
         self._width = width
-        self._input_length = self._term.length(content)
+        self._input_length = self._term.length(self.content)
 
         self._quit = False
         self._carriage_returned = False
 
-        self.init_keystrokes(keyset=keyset or PC_KEYSET.copy())
+        self.init_keystrokes(keyset=copy.deepcopy(keyset or PC_KEYSET))
         self.init_theme(colors=colors, glyphs=glyphs)
 
     def init_theme(self, colors=None, glyphs=None, hidden=False):
@@ -134,7 +135,7 @@ class LineEditor(object):
         content = self.content
         if self.hidden:
             content = self.hidden * self._term.length(self.content)
-        return u''.join((disp_lightbar, content, self._term.cursor_visible))
+        return u''.join((disp_lightbar, content, self._term.normal_cursor))
 
     def process_keystroke(self, keystroke):
         """
@@ -170,11 +171,11 @@ class LineEditor(object):
             self._carriage_returned = True
         elif keystroke in self.keyset['exit']:
             self._quit = True
-        elif isinstance(keystroke, int):
+        elif isinstance(keystroke, int) or len(keystroke) != 1:
             return u''
         elif (ord(keystroke) >= ord(' ') and
-                (self._term.length(self.content) < self.width
-                 or self.width is None)):
+                (self.width is None
+                 or self._term.length(self.content) < self.width)):
             self.content += keystroke
             return keystroke if not self.hidden else self.hidden
         return u''
@@ -239,7 +240,8 @@ class ScrollingEditor(AnsiWindow):
         # '3', even though we only want 1; we must also offset (y, x) by
         # 1 and width by 2: issue #161.
         kwargs['height'] = 3
-        self.init_keystrokes(keyset=kwargs.pop('keyset', PC_KEYSET.copy()))
+        self.init_keystrokes(
+            keyset=copy.deepcopy(kwargs.pop('keyset', PC_KEYSET)))
         AnsiWindow.__init__(self, *args, **kwargs)
 
     def init_theme(self, colors=None, glyphs=None):
@@ -412,7 +414,7 @@ class ScrollingEditor(AnsiWindow):
               keystroke.code in self.keyset['exit']):
             self._quit = True
             rstr = u''
-        elif keystroke.is_sequence:
+        elif keystroke.is_sequence or len(keystroke) != 1:
             # could beep also, (error)
             rstr = u''
         else:
@@ -445,7 +447,7 @@ class ScrollingEditor(AnsiWindow):
         or 0 for 'after' (default).
         """
         xpos = self._xpadding + self._horiz_pos + x_adjust
-        return self.pos(1, xpos) + self._term.cursor_visible
+        return self.pos(1, xpos) + self._term.normal_cursor
 
     def refresh(self):
         """
@@ -527,7 +529,7 @@ class ScrollingEditor(AnsiWindow):
         self.content = ucs
         self._carriage_returned = False
         self._quit = False
-        assert unichr(27) not in ucs, ('Editor is not ESC sequence-safe')
+        assert chr(27) not in ucs, ('Editor is not ESC sequence-safe')
 
     def add(self, u_chr):
         """

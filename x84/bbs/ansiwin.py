@@ -11,14 +11,14 @@ GLYPHSETS = {
         'top-horiz': u'-',
         'bot-horiz': u'-', },
     'thin': {
-        'top-left': chr(218).decode('cp437'),
-        'bot-left': chr(192).decode('cp437'),
-        'top-right': chr(191).decode('cp437'),
-        'bot-right': chr(217).decode('cp437'),
-        'left-vert': chr(179).decode('cp437'),
-        'right-vert': chr(179).decode('cp437'),
-        'top-horiz': chr(196).decode('cp437'),
-        'bot-horiz': chr(196).decode('cp437'),
+        'top-left': bytes([218]).decode('cp437'),
+        'bot-left': bytes([192]).decode('cp437'),
+        'top-right': bytes([191]).decode('cp437'),
+        'bot-right': bytes([217]).decode('cp437'),
+        'left-vert': bytes([179]).decode('cp437'),
+        'right-vert': bytes([179]).decode('cp437'),
+        'top-horiz': bytes([196]).decode('cp437'),
+        'bot-horiz': bytes([196]).decode('cp437'),
     },
 }
 
@@ -161,7 +161,7 @@ class AnsiWindow(object):
         return (win.yloc >= self.yloc
                 and win.yloc + win.height <= self.yloc + self.height
                 and win.xloc >= self.xloc
-                and win.xloc + win.w <= self.xloc + self.width)
+                and win.xloc + win.width <= self.xloc + self.width)
 
     # deprecated alias
     iswithin = willfit
@@ -173,14 +173,14 @@ class AnsiWindow(object):
 
     def title(self, ansi_text):
         """ Return sequence for displaying text on top border of window. """
-        xloc = self.width / 2 - min(self._term.length(ansi_text) / 2,
-                                    self.width / 2)
+        xloc = self.width // 2 - min(self._term.length(ansi_text) // 2,
+                                     self.width // 2)
         return self.pos(0, max(0, xloc)) + ansi_text
 
     def footer(self, text):
         """ Return sequence for displaying text on bottom border of window. """
-        xloc = self.width / 2 - min(self._term.length(text) / 2,
-                                    self.width / 2)
+        xloc = self.width // 2 - min(self._term.length(text) // 2,
+                                     self.width // 2)
         return self.pos(max(0, self.height - 1), max(0, xloc)) + text
 
     def border(self):

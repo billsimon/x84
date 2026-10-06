@@ -2,19 +2,9 @@
 """
 one-liners script for x/84.
 
-To use the (optional) http://shroo.ms API,
-which provides something of an intra-bbs oneliners,
-configure a section in your .ini file::
-
-    [shroo-ms]
-    enabled = yes
-    idkey = id-key-here-ask-frost-lol
-    restkey = rest-key-here-ask-frost-too
-
-You'll have to contact a guy named 'frost',
-more than likely found on telnet://bbs.shroo.ms.
+Oneliners are stored in the local database, and announced to all other
+sessions as they are posted, so that it works something like a chatroom.
 """
-import threading
 import logging
 import time
 
@@ -63,165 +53,12 @@ MAX_HISTORY = get_ini(
     section='oneliners', key='max_history', getter='getint'
 ) or 1000
 
-#: whether shroo.ms api is enabled
-shroo_ms_enabled = get_ini(
-    section='shroo-ms', key='enabled', getter='getboolean')
-
-#: shroo.ms api url
-shroo_ms_api_url = get_ini(
-    section='shroo-ms', key='api_url'
-) or 'https://api.parse.com/1/classes/wall'
-
-#: shroo.ms api key
-shroo_ms_api_key = get_ini(
-    section='shroo-ms', key='idkey')
-
-#: shroo.ms rest key
-shroo_ms_restkey = get_ini(
-    section='shroo-ms', key='restkey')
-
-#: shroo.ms named bbs for posts
-system_bbsname = get_ini(
-    section='system', key='bbsname')
-
 #: returns time of given timestamp for keysort
 keysort_by_datetime = lambda oneliner: (
     time.strptime(oneliner['timestamp'], '%Y-%m-%d %H:%M:%S'))
 
 
-# prevents: ImportError: Failed to import _strptime because the import lock is
-# held by another thread. http://bugs.python.org/issue7980
-_ = time.strptime('20110101', '%Y%m%d')  # noqa
-
-
-class FetchUpdatesShrooMs(threading.Thread):
-
-    """ Fetch shroo.ms onliners as a background thread. """
-
-    def __init__(self):
-        # It's not safe to receive data from a database from
-        # within a thread ... something we should address ..
-        # so we do it in __init__, bug #154
-        self.existing_content = DBProxy('oneliner').copy()
-        self.new_content = None
-        self.log = logging.getLogger(__name__)
-        super(FetchUpdatesShrooMs, self).__init__()
-
-    def run(self):
-        import requests
-        params = {'limit': MAX_HISTORY, 'order': '-createdAt'}
-        headers = {
-            'X-Parse-Application-Id': shroo_ms_api_key,
-            'X-Parse-REST-API-Key': shroo_ms_restkey,
-            'Content-Type': 'application/json'
-        }
-        # It's ok for a thread to raise an exception naturally on request,
-        result = requests.get(shroo_ms_api_url, params=params, headers=headers)
-        if 200 != result.status_code:
-            # log non-200 error code
-            self.log.error('[shroo.ms] returned %d:', result.status_code)
-            self.log.error(result.content)
-            return
-        content = self.transform_result(result)
-        self.notify_update_database(content)
-
-    def notify_update_database(self, content):
-        new_content = {}
-        for key, oneliner in content:
-            if str(key) not in self.existing_content:
-                new_content[key] = oneliner
-        if new_content:
-            self.log.info('[shroo.ms] %d new entries', len(new_content))
-            self.new_content = new_content
-            getsession().buffer_event('oneliner', True)
-        else:
-            self.log.debug('[shroo.ms] no new entries')
-
-    def transform_result(self, result):
-        # strangely, convert... base-36 integers .. haliphax's work ?
-        content = [(str(int(item['objectId'], 36)), dict(
-            oneliner=item['bbstagline'],
-            alias=item['bbsuser'],
-            bbsname=self.parse_bbsname(item['bbsname']),
-            timestamp=self.parse_iso8601(item['createdAt'])
-        )) for item in result.json()['results']]
-        return content
-
-    @staticmethod
-    def parse_bbsname(bbsname):
-        # I like the aliases, rename hellbeard's
-        if bbsname == 'Blood Island/x':
-            return 'BI/X'
-        # and maze's
-        elif bbsname == 'Random Noize':
-            return 'RNz'
-        # and spidy's
-        elif bbsname == 'BO':
-            return 'BoF'
-        return bbsname
-
-    @staticmethod
-    def parse_iso8601(timestamp):
-        from dateutil.parser import parse
-        from dateutil.tz import tzlocal
-        as_localtime = parse(timestamp).astimezone(tzlocal())
-        return as_localtime.strftime('%Y-%m-%d %H:%M:%S')
-
-
-def post_shroo_ms(message, username):
-    """ Post to shroo.ms oneliners API. """
-    # std
-    import json
-
-    # 3rd-party
-    import requests
-
-    log = logging.getLogger(__name__)
-
-    headers = {
-        'X-Parse-Application-Id': shroo_ms_api_key,
-        'X-Parse-REST-API-Key': shroo_ms_restkey,
-        'Content-Type': 'application/json'
-    }
-    payload = json.dumps({
-        'bbsname': system_bbsname,
-        'bbsuser': username,
-        'bbstagline': message,
-        # There is an ability to post as an alternative identity, presumably so
-        # cap'n'hood of black flag bbs can impersonate people?  Anyway, we
-        # always just set False, and we don't care on receipt whether the user
-        # is impersonated.
-        'bbsfakeuser': False,
-    })
-    try:
-        result = requests.post(shroo_ms_api_url, data=payload, headers=headers)
-    except Exception as err:
-        # log exception string, cause message to post locally
-        log.warn(err)
-        return False
-    else:
-        if result.status_code >= 400:
-            # log exceptions string, cause message to post locally
-            log.error('[shroo.ms] returned %d:', result.status_code)
-            log.error(result.content)
-            return False
-        log.info('(%d) OK [shroo.ms]: %s', result.status_code, message)
-
-        # fetch our own post on shroo-ms in background
-        thread = FetchUpdatesShrooMs()
-        thread.start()
-        return thread
-
-
 # -- database functions
-
-
-def do_merge_shroo_ms(new_content):
-    """ Add oneliners from shroo-ms to local database. """
-    udb = DBProxy('oneliner')
-    with udb:
-        udb.update(new_content)
-    maybe_expunge_records()
 
 
 def maybe_expunge_records():
@@ -247,7 +84,7 @@ def add_oneline(session, message):
     udb = DBProxy('oneliner')
     with udb:
         key = max([int(key) for key in udb.keys()] or [0]) + 1
-        udb[key] = {
+        udb['%d' % (key,)] = {
             'oneliner': message,
             'alias': getsession().user.handle,
             'bbsname': get_ini('system', 'bbsname'),
@@ -295,13 +132,12 @@ def say_something(term, session):
     # use same line as previous prompt, clearing it first,
     echo(term.move_x(0) + term.clear_eol)
     colors = {'highlight': term.red_reverse}
-
-    xpos = max((term.width / 2) - ((MAX_MSGLEN / 2) + 3), 0)
+    xpos = max((term.width // 2) - ((MAX_MSGLEN // 2) + 3), 0)
     echo(term.move_x(xpos))
     if MIN_ELAPSED:
         lastliner = session.user.get('lastliner', 0)
-        if lastliner and time.time() - lastliner > MIN_ELAPSED:
-            echo(term.red_bold("You've said enough already!"))
+        if lastliner and time.time() - lastliner < MIN_ELAPSED:
+            echo(term.bold_red("You've said enough already!"))
             term.inkey(timeout=1)
             echo(term.move_x(0))
             # only re-draw prompt (user canceled)
@@ -317,13 +153,6 @@ def say_something(term, session):
 
     echo(term.move_x(xpos) + term.clear_eol)
     session.user['lastliner'] = time.time()
-
-    # optionally post to shroo.ms 'global oneliners'
-    if shroo_ms_enabled:
-        echo(term.red_reverse('Burning, please wait ...'))
-        return post_shroo_ms(message=inp, username=session.user.handle)
-
-    # or, post locally
     add_oneline(session=session, message=inp.strip())
     return True
 
@@ -381,8 +210,6 @@ def generate_recent_oneliners(term, n_liners, offset):
         _color = palette[count % len(palette)]
         ago = get_timeago(now, oneliner.get('timestamp'))
         alias = oneliner.get('alias', 'anonymous')
-        bbsname = ('' if not shroo_ms_enabled else
-                   oneliner.get('bbsname', 'untergrund'))
         content = (oneliner.get('oneliner', u''))
         max_msglen = MAX_MSGLEN
         if len(alias) > username_max_length:
@@ -392,7 +219,7 @@ def generate_recent_oneliners(term, n_liners, offset):
                 alias.rjust(username_max_length),
                 term.ljust(decode_pipe(content[:max_msglen]), max_msglen)
             )
-            right_part = '{0} {1}'.format(_color(bbsname.rjust(4)), ago)
+            right_part = _color(ago)
             txt_field = left_part + right_part
             if term.length(txt_field) < term.width:
                 break
@@ -402,7 +229,7 @@ def generate_recent_oneliners(term, n_liners, offset):
             max_msglen -= 2
         final_text_field = u''.join((
             final_text_field,
-            term.move_x(max(0, (term.width / 2) - 45)),
+            term.move_x(max(0, (term.width // 2) - 45)),
             txt_field,
             term.clear_eol,
             u'\r\n')
@@ -424,11 +251,7 @@ def display_oneliners(term, top_margin, offset):
 
 
 def do_prompt(term, session):
-    thread = None
-    if shroo_ms_enabled:
-        # fetch shroo-ms api oneliners
-        thread = FetchUpdatesShrooMs()
-        thread.start()
+    """ Display oneliners and prompt for input until quit. """
     dirty = -1
     top_margin = bot_margin = 0
     offset = 0
@@ -444,15 +267,6 @@ def do_prompt(term, session):
 
         if dirty == 1:
             # re-display all oneliners on update, or dirty == 1
-            # if any shroo-ms oneliners were received, merge them
-            # into the database from the main thread.
-            if thread is not None and not thread.is_alive():
-                if thread.new_content:
-                    echo(term.move_x(0) + term.clear_eol)
-                    echo(term.center(term.bold_red('This just in!')).rstrip())
-                    do_merge_shroo_ms(thread.new_content)
-                thread = None
-
             with term.hidden_cursor():
                 bot_margin, offset = display_oneliners(
                     term, top_margin, offset)
@@ -480,14 +294,7 @@ def do_prompt(term, session):
                 if inp.lower() in (u'y',):
                     # say something, refresh after
                     echo(inp)
-                    say_retval = say_something(term, session)
-                    if isinstance(say_retval, FetchUpdatesShrooMs):
-                        # a rather strange hack, we track the thread of
-                        # api calls so that we can merge its final content
-                        # into our local database. See __init__ for
-                        # bug id and description
-                        thread = say_retval
-                    elif say_retval:
+                    if say_something(term, session):
                         # user has said something to the local database,
                         # refresh it so that they can beam with pride ...
                         dirty = 1

@@ -60,7 +60,9 @@ class Dropfile(object):
     def save(self, folder):
         """ Save dropfile to destination ``folder``. """
         f_path = os.path.join(folder, self.filename)
-        with codecs.open(f_path, 'w', 'ascii', 'replace') as out_p:
+        # dropfiles are written as-is: line endings are explicit.
+        with open(f_path, 'w', encoding='ascii', errors='replace',
+                  newline='') as out_p:
             out_p.write(self.__str__())
 
     @property
@@ -378,18 +380,19 @@ class Door(object):
             raise ValueError('args must be tuple or list')
 
         self.log = logging.getLogger(__name__)
-        self.env = (env or {}).copy()
+        self.env = dict(env or {})
         self.env.update(
-            {'LANG': env.get('LANG', 'en_US.UTF-8'),
-             'TERM': env.get('TERM', self._term.kind),
-             'PATH': env.get('PATH', get_ini('door', 'path')),
-             'HOME': env.get('HOME', os.getenv('HOME')),
+            {'LANG': self.env.get('LANG', 'en_US.UTF-8'),
+             'TERM': self.env.get('TERM', self._term.kind),
+             'PATH': self.env.get('PATH', get_ini('door', 'path')),
+             'HOME': self.env.get('HOME', os.getenv('HOME', '/')),
              'LINES': str(self._term.height),
              'COLUMNS': str(self._term.width),
              })
 
         self.cp437 = cp437
-        self._utf8_decoder = codecs.getincrementaldecoder('utf8')()
+        self._utf8_decoder = codecs.getincrementaldecoder('utf8')(
+            errors='replace')
         self.raw = raw
 
     def run(self):
@@ -404,7 +407,7 @@ class Door(object):
             import termios
             import fcntl
             import pty
-        except ImportError as err:
+        except ImportError:
             raise OSError('door support not (yet) supported on {0} platform.'
                           .format(sys.platform.lower()))
 
@@ -494,12 +497,7 @@ class Door(object):
             return data.decode('cp437_art')
 
         # utf-8, however, may be read mid-stream of a multibyte sequence.
-        decoded = list()
-        for byte in data:
-            ucs = self._utf8_decoder.decode(byte, final=False)
-            if ucs is not None:
-                decoded.append(ucs)
-        return u''.join(decoded)
+        return self._utf8_decoder.decode(data, final=False)
 
     def resize(self):
         """ Signal resize of terminal to pty. """
@@ -552,8 +550,10 @@ class Door(object):
                         # we wrote none or some of our keyboard input, but
                         # not all. re-buffer remaining bytes back into
                         # session for next poll
-                        self._session.buffer_input(data[n_written:])
-                        self.log.warn('re-buffer_input(%r)!', data[n_written:])
+                        self._session.buffer_input(data[n_written:],
+                                                   pushback=True)
+                        self.log.warning('re-buffer_input(%r)!',
+                                         data[n_written:])
 
 
 class DOSDoor(Door):
@@ -596,7 +596,8 @@ class DOSDoor(Door):
     #: and working around a strange keyboard input bug.
     START_BLOCK = 4.0
 
-    def __init__(self, cmd='/bin/uname', args=(), env=None, cp437=True):
+    def __init__(self, cmd='/bin/uname', args=(), env=None, cp437=True,
+                 raw=False):
         """
         Class initializer.
 
@@ -609,7 +610,9 @@ class DOSDoor(Door):
                          You should more than likely specify values for TERM,
                          PATH, HOME, and LANG.
         """
-        Door.__init__(self, cmd=cmd, args=args, env=env, cp437=cp437)
+        Door.__init__(self, cmd=cmd, args=args, env=env, cp437=cp437,
+                      raw=raw)
+        self._stime = None
         self._re_trim_clear = re.compile(self.RE_REPWITH_CLEAR,
                                          flags=re.DOTALL)
         self._re_trim_none = re.compile(self.RE_REPWITH_NONE,
@@ -631,7 +634,7 @@ class DOSDoor(Door):
 
     def input_filter(self, data):
         """ filter keyboard input (used for "throway" bug workaround). """
-        return data if time.time() - self._stime > self.START_BLOCK else u''
+        return data if time.time() - self._stime > self.START_BLOCK else b''
 
     def resize(self):
         """ Signal resize of terminal to DOS -- does nothing. """
@@ -663,5 +666,5 @@ class DOSDoor(Door):
 
         # flush any previously decoded but unreceived keystrokes,
         # and any unprocessed input from telnet session not yet processed.
-        self._term.kbflush()
+        self._term.flushinp()
         self._session.flush_event('input')

@@ -1,11 +1,15 @@
-""" Weather forecast script for x/84. """
-from xml.etree import cElementTree as ET
+"""
+Weather forecast script for x/84.
+
+Weather data is provided by the free Open-Meteo API (https://open-meteo.com),
+which requires no API key, under the terms of its CC BY 4.0 license.
+"""
 import itertools
+import datetime
 import textwrap
 import requests
 import warnings
 import logging
-import time
 import os
 
 
@@ -19,20 +23,69 @@ top_margin = 1
 next_margin = 2
 cf_key = u'!'
 
+#: Open-Meteo geocoding api, for locations by city name or postal code.
+GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search'
+
+#: Open-Meteo forecast api.
+FORECAST_URL = 'https://api.open-meteo.com/v1/forecast'
+
+#: seconds to wait for weather api responses.
+REQUEST_TIMEOUT = 15
+
+#: attribution required by the Open-Meteo license.
+ATTRIBUTION = u'Weather data by Open-Meteo.com'
+
+#: WMO weather interpretation codes, mapped to a description, and the
+#: (AccuWeather-numbered) icon of 'art/weather/{icon}.ans' to display, by
+#: day and by night.
+WMO_CODES = {
+    0: (u'Clear', 1, 33),
+    1: (u'Mostly clear', 2, 34),
+    2: (u'Partly cloudy', 3, 35),
+    3: (u'Overcast', 7, 38),
+    45: (u'Fog', 11, 11),
+    48: (u'Freezing fog', 11, 11),
+    51: (u'Light drizzle', 12, 39),
+    53: (u'Drizzle', 12, 39),
+    55: (u'Heavy drizzle', 18, 18),
+    56: (u'Freezing drizzle', 26, 26),
+    57: (u'Freezing drizzle', 26, 26),
+    61: (u'Light rain', 12, 39),
+    63: (u'Rain', 18, 18),
+    65: (u'Heavy rain', 18, 18),
+    66: (u'Freezing rain', 26, 26),
+    67: (u'Freezing rain', 26, 26),
+    71: (u'Light snow', 19, 43),
+    73: (u'Snow', 22, 44),
+    75: (u'Heavy snow', 22, 44),
+    77: (u'Snow grains', 19, 43),
+    80: (u'Rain showers', 14, 39),
+    81: (u'Rain showers', 13, 40),
+    82: (u'Heavy showers', 13, 40),
+    85: (u'Snow showers', 21, 43),
+    86: (u'Snow showers', 20, 43),
+    95: (u'Thunderstorms', 15, 42),
+    96: (u'T-storms, hail', 16, 42),
+    99: (u'T-storms, hail', 16, 42),
+}
+
+#: compass directions, for wind direction in degrees.
+COMPASS = (u'N', u'NNE', u'NE', u'ENE', u'E', u'ESE', u'SE', u'SSE',
+           u'S', u'SSW', u'SW', u'WSW', u'W', u'WNW', u'NW', u'NNW')
+
 
 def temp_conv(val, centigrade):
     """
-    Convert temperature ``val`` to C or F, returning both the integer
-    value and brief descriptor as tuple, fe. (33, u'F',).
+    Convert temperature ``val`` (fahrenheit) to C or F, returning both the
+    integer value and brief descriptor as tuple, fe. (33, u'F',).
     """
     try:
-        val = int(val)
-    except ValueError:
+        val = float(val)
+    except (TypeError, ValueError):
         return '', ''
     if not centigrade:
-        return val, u'F'
-    val = int((val - 32) * (float(5) / 9))
-    return val, u'C'
+        return int(round(val)), u'F'
+    return int(round((val - 32) * (5 / 9))), u'C'
 
 
 def speed_conv(val, centigrade):
@@ -45,13 +98,12 @@ def speed_conv(val, centigrade):
     """
     # we simply use the 'centigrade' measurement as imperial vs. metric
     try:
-        val = int(val)
-    except ValueError:
+        val = float(val)
+    except (TypeError, ValueError):
         return '', ''
     if not centigrade:
-        return val, u'MPH'
-    else:
-        return int(float(val) / 0.62137), 'KPH'
+        return int(round(val)), u'MPH'
+    return int(round(val / 0.62137)), u'KPH'
 
 
 def disp_msg(msg):
@@ -90,10 +142,10 @@ def disp_search_help():
     from x84.bbs import getterminal, echo
     term = getterminal()
 
-    enter = term.yellow(u'Enter U.S.')
-    postal = term.bold_yellow(u'postal code')
-    or_nearest = term.yellow(u', or nearest')
-    int_city = term.bold_yellow(u'international citY.')
+    enter = term.yellow(u'Enter a')
+    city = term.bold_yellow(u'city')
+    or_postal = term.yellow(u'or')
+    postal = term.bold_yellow(u'postal code.')
     keyhelp = (u'{t.bold_yellow}({t.normal}'
                u'{t.underline_yellow}Escape{t.normal}'
                u'{t.bold_white}:{t.normal}'
@@ -101,106 +153,134 @@ def disp_search_help():
                u'{t.bold_yellow}){t.normal}'.format(t=term))
 
     echo(u'\r\n\r\n' + term.normal)
-    echo(u''.join((
-        term.wrap(u'{enter} {postal}{or_nearest} {int_city} {keyhelp}'
-                  .format(enter=enter, postal=postal,
-                          or_nearest=or_nearest,
-                          int_city=int_city,
-                          keyhelp=keyhelp),
+    echo(u'\r\n'.join(
+        term.wrap(u'{enter} {city} {or_postal} {postal} {keyhelp}'
+                  .format(enter=enter, city=city, or_postal=or_postal,
+                          postal=postal, keyhelp=keyhelp),
                   term.width)
-    )))
+    ))
 
 
-def fetch_weather(postal):
+def describe_wmo_code(code, is_day=True):
+    """ Return tuple of (description, icon number) for WMO weather code. """
+    try:
+        description, day_icon, night_icon = WMO_CODES[int(code)]
+    except (KeyError, TypeError, ValueError):
+        return u'', 1
+    return description, (day_icon if is_day else night_icon)
+
+
+def fetch_weather(location):
     """
-    Given postal code, fetch and return xml root node of weather results.
+    Fetch and return today's weather and forecast for ``location``.
+
+    :param dict location: location as returned by :func:`do_search`.
+    :rtype: tuple
+    :returns: tuple of ``(todays, forecast)``: a dictionary describing
+        today's weather, and a list of dictionaries describing each
+        day of the forecast; or ``(None, None)`` on failure.
     """
-    import StringIO
     disp_msg(u'fEtChiNG')
-    resp = requests.get(u'http://apple.accuweather.com'
-                        + u'/adcbin/apple/Apple_Weather_Data.asp',
-                        params=(('zipcode', postal),))
-    if resp is None:
+    try:
+        resp = requests.get(FORECAST_URL, timeout=REQUEST_TIMEOUT, params={
+            'latitude': location['latitude'],
+            'longitude': location['longitude'],
+            'current': ','.join((
+                'temperature_2m', 'relative_humidity_2m',
+                'apparent_temperature', 'is_day', 'weather_code',
+                'wind_speed_10m', 'wind_direction_10m')),
+            'daily': ','.join((
+                'weather_code', 'temperature_2m_max', 'temperature_2m_min')),
+            'timezone': 'auto',
+            'forecast_days': 7,
+            'temperature_unit': 'fahrenheit',
+            'wind_speed_unit': 'mph',
+        })
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError, KeyError) as err:
+        log.warning('weather fetch failed: {0}'.format(err))
         disp_notfound()
-        return None
-    if resp.status_code != 200:
-        raise RuntimeError('Status code: {}, content={!r}'.format(
-            resp.status_code, resp.content))
-    xml_stream = StringIO.StringIO(resp.content)
-    tree = ET.parse(xml_stream)
-    return tree.getroot()
+        return None, None
+    return (parse_todays_weather(data, location),
+            parse_forecast(data))
 
 
 def do_search(term, search):
     """ Given search string, return list of possible matching locations. """
-    import StringIO
     from x84.bbs import echo
     disp_msg(u'SEARChiNG')
-    resp = requests.get(u'http://apple.accuweather.com'
-                        + u'/adcbin/apple/Apple_find_city.asp',
-                        params=(('location', search),))
     locations = list()
-    if resp is None:
-        disp_notfound()
-    elif resp.status_code != 200:
-        # todo: logger.error
-        echo(u'\r\n' + u'Status Code: %s\r\n\r\n' % (resp.status_code,))
-        echo(repr(resp.content))
-        echo(u'\r\n\r\n' + 'Press any key')
+    try:
+        resp = requests.get(GEOCODE_URL, timeout=REQUEST_TIMEOUT, params={
+            # only the city of 'city, state' is searched for.
+            'name': search.split(',')[0].strip(),
+            'count': 20, 'language': 'en', 'format': 'json'})
+        resp.raise_for_status()
+        results = resp.json().get('results', [])
+    except (requests.RequestException, ValueError) as err:
+        echo(u'\r\n{0}\r\n\r\nPress any key'.format(err))
         term.inkey()
-    else:
-        # print resp.content
-        xml_stream = StringIO.StringIO(resp.content)
-        locations = list([dict(elem.attrib.items())
-                          for _, elem in ET.iterparse(xml_stream)
-                          if 'location' in elem.tag])
-        if 0 == len(locations):
-            disp_notfound()
-        else:
-            disp_found(len(locations))
+        return locations
 
+    for result in results:
+        locations.append({
+            'id': result['id'],
+            'city': result['name'],
+            'state': result.get('admin1') or result.get('country', u''),
+            'country': result.get('country_code', u''),
+            'latitude': result['latitude'],
+            'longitude': result['longitude'],
+        })
+    if 0 == len(locations):
+        disp_notfound()
+    else:
+        disp_found(len(locations))
     return locations
 
 
-def parse_todays_weather(root):
+def parse_todays_weather(data, location):
     """
     Parse and return dictionary describing today's weather
-    from weather xml root node.
+    from Open-Meteo forecast data.
     """
-    weather = dict()
-    # parse all current conditions from XML, value is cdata.
-    current_conditions = root.find('CurrentConditions')
-    if current_conditions is None:
-        log.debug('Current conditions is None: root={!r}'
-                  .format(ET.tostring(root)))
-        return weather
-    for elem in current_conditions:
-        weather[elem.tag] = elem.text.strip() if elem.text is not None else u''
-        # store attribute values
-        for attr, val in elem.attrib.items():
-            weather['%s-%s' % (elem.tag, attr)] = val
-    return weather
+    current = data.get('current', {})
+    description, icon = describe_wmo_code(current.get('weather_code'),
+                                          bool(current.get('is_day', 1)))
+    direction = current.get('wind_direction_10m')
+    when = current.get('time', u'')
+    return {
+        'City': location.get('city', u''),
+        'State': location.get('state', u''),
+        'Time': when.partition('T')[2] or u'00:00',
+        'Temperature': current.get('temperature_2m'),
+        'RealFeel': current.get('apparent_temperature'),
+        'WindSpeed': current.get('wind_speed_10m'),
+        'WindDirection': (COMPASS[int((direction % 360) / 22.5 + 0.5) % 16]
+                          if direction is not None else u''),
+        'Humidity': u'{0}%'.format(current.get('relative_humidity_2m', u'')),
+        'WeatherText': description,
+        'WeatherIcon': icon,
+    }
 
 
-def parse_forecast(root):
+def parse_forecast(data):
     """
-    Parse and return dictionary describing weather forecast
-    from weather xml root node.
+    Parse and return list of dictionaries describing weather forecast
+    from Open-Meteo forecast data.
     """
-    forecast = dict()
-    xml_forecast = root.find('Forecast')
-    if xml_forecast is None:
-        log.debug('Forecast is None: root={!r}'
-                  .format(ET.tostring(root)))
-        return forecast
-
-    for elem in xml_forecast:
-        if elem.tag == 'day':
-            key = int(elem.attrib.get('number'))
-            forecast[key] = dict()
-            for subelem in elem:
-                forecast[key][subelem.tag] = subelem.text.strip()
-    return [value for _, value in sorted(forecast.items())]
+    daily = data.get('daily', {})
+    forecast = []
+    for idx, day in enumerate(daily.get('time', [])):
+        description, icon = describe_wmo_code(daily['weather_code'][idx])
+        forecast.append({
+            'DayCode': datetime.date.fromisoformat(day).strftime('%A'),
+            'WeatherIcon': icon,
+            'High_Temperature': daily['temperature_2m_max'][idx],
+            'Low_Temperature': daily['temperature_2m_min'][idx],
+            'TXT_Short': description,
+        })
+    return forecast
 
 
 def get_centigrade():
@@ -229,13 +309,11 @@ def get_centigrade():
         inp = term.inkey()
         if inp in (u'c', u'C'):
             session.user['centigrade'] = True
-            session.user.save()
             break
         elif inp in (u'f', u'F'):
             session.user['centigrade'] = False
-            session.user.save()
             break
-        elif inp in (u'q', u'Q', term.KEY_EXIT):
+        elif inp in (u'q', u'Q') or inp.code == term.KEY_ESCAPE:
             break
 
 
@@ -260,8 +338,7 @@ def chk_save_location(location):
     """
     from x84.bbs import getterminal, getsession, echo
     session, term = getsession(), getterminal()
-    stored_location = session.user.get('location', dict()).items()
-    if (sorted(location.items()) == sorted(stored_location)):
+    if location == session.user.get('location', dict()):
         # location already saved
         return False
     if session.user.handle == 'anonymous':
@@ -281,11 +358,17 @@ def chk_save_location(location):
     echo(u': ')
     while True:
         inp = term.inkey()
-        if inp.code == term.KEY_EXIT or inp.lower() in (u'n', 'q'):
+        if inp.code == term.KEY_ESCAPE or inp.lower() in (u'n', 'q'):
             break
         elif inp.code == term.KEY_ENTER or inp.lower() in (u'y', u' '):
             session.user['location'] = location
             break
+
+
+def location_name(location):
+    """ Return name of location as 'city, state'. """
+    return u', '.join(_part for _part in (
+        location.get('city', u''), location.get('state', u'')) if _part)
 
 
 def get_zipsearch(zipcode=u''):
@@ -307,12 +390,11 @@ def chose_location_lightbar(locations):
     """
     from x84.bbs import getterminal, echo, Lightbar
     term = getterminal()
-    fmt = u'%(city)s, %(state)s'
-    lookup = dict([(loc['postal'], loc) for loc in locations])
+    lookup = dict([(loc['id'], loc) for loc in locations])
     fullheight = min(term.height - 8, len(locations) + 2)
     fullwidth = min(75, int(term.width * .8))
     # shrink window to minimum width
-    maxwidth = max([len(fmt % val) for val in lookup.values()]) + 2
+    maxwidth = max([len(location_name(val)) for val in lookup.values()]) + 2
     if maxwidth < fullwidth:
         fullwidth = maxwidth
     echo(u'\r\n' * fullheight)
@@ -320,8 +402,7 @@ def chose_location_lightbar(locations):
                         width=fullwidth,
                         yloc=term.height - fullheight,
                         xloc=int((term.width / 2) - (fullwidth / 2)))
-    lightbar.update([(key, fmt % val) for key, val in lookup.items()])
-    lightbar.update([(key, fmt % val) for key, val in lookup.items()])
+    lightbar.update([(loc['id'], location_name(loc)) for loc in locations])
     lightbar.colors['border'] = term.yellow
     echo(lightbar.border())
     echo(lightbar.title(u''.join((
@@ -338,8 +419,7 @@ def chose_location_lightbar(locations):
     lightbar.colors['highlight'] = term.yellow_reverse
     choice = lightbar.read()
     echo(lightbar.erase())
-    return ((loc for loc in locations if choice == loc['postal']
-             ).next() if choice is not None else choice)
+    return lookup.get(choice)
 
 
 def chose_location(locations):
@@ -363,7 +443,7 @@ def location_prompt(location, msg='WEAthER'):
     term = getterminal()
     echo(u''.join((u'\r\n\r\n',
                    term.yellow(u'Display %s for ' % (msg,)),
-                   term.bold('%(city)s, %(state)s' % location),
+                   term.bold(location_name(location)),
                    term.yellow(' ? '),
                    term.bold_yellow(u'['),
                    term.underline_yellow(u'yn'),
@@ -383,8 +463,9 @@ def get_icon(weather):
     artfile = os.path.join(weather_icons, '{}.ans'.format(icon))
     if not os.path.exists(artfile):
         warnings.warn('{} not found'.format(artfile))
-        return u'[ .{:>2}. ]'.format(icon)
-    return open(artfile, 'r').read().decode('cp437_art').splitlines()
+        return [u'[ .{:>2}. ]'.format(icon)]
+    with open(artfile, 'rb') as fin:
+        return fin.read().decode('cp437_art').splitlines()
 
 
 def display_panel(weather, column, centigrade):
@@ -402,7 +483,7 @@ def display_panel(weather, column, centigrade):
         echo(art_row)
     echo(term.normal)
 
-    degree = chr(248).decode('cp437_art')
+    degree = b'\xf8'.decode('cp437_art')
     # display days' high,
     echo(term.move(panel_height + top_margin + 1, column))
     high = weather.get('High_Temperature', None)
@@ -418,8 +499,9 @@ def display_panel(weather, column, centigrade):
         low=low, degree=degree, conv=conv).rjust(panel_width - 3))
 
     # display short txt,
-    weather_txt = unicode(weather.get('TXT_Short', ''))
+    weather_txt = str(weather.get('TXT_Short', ''))
     txt_wrapped = textwrap.wrap(weather_txt, (panel_width - 2))
+    row_loc = panel_height + top_margin + 3
 
     for row_idx, txt_row in enumerate(txt_wrapped):
         row_loc = panel_height + top_margin + row_idx + 4
@@ -461,13 +543,12 @@ def display_weather(todays, forecast, centigrade):
                 break
             bottom = max(display_panel(day, column, centigrade), bottom)
 
-    timenow = time.strftime('%I:%M%p',
-                            time.strptime(todays.get('Time', '00:00'),
-                                          '%H:%M'))
+    timenow = datetime.datetime.strptime(
+        todays.get('Time', '00:00'), '%H:%M').strftime('%I:%M%p')
     temp, deg_conv = temp_conv(todays.get('Temperature', ''), centigrade)
     real_temp, deg_conv = temp_conv(todays.get('RealFeel', ''), centigrade)
     speed, spd_conv = speed_conv(todays.get('WindSpeed', ''), centigrade)
-    degree = '\xf8'.decode('cp437_art')
+    degree = b'\xf8'.decode('cp437_art')
 
     current_0 = u'Current conditions at {timenow}'.format(timenow=timenow)
     current_1 = u'{0}'.format(todays.get('WeatherText', ''))
@@ -481,14 +562,15 @@ def display_weather(todays, forecast, centigrade):
         wind=todays.get('WindDirection', ''))
     current_5 = u'Humidity of {0}'.format(todays.get('Humidity', ''))
 
+    temperature = u' '.join(_txt for _txt in (current_2, current_3) if _txt)
     wrapped = textwrap.wrap(
-        u'{0}: {1}. {2} {3}, {4}, {5}.'.format(
-            current_0, current_1, current_2, current_3,
-            current_4, current_5), min(term.width - panel_width - 2, 40))
+        u'{0}: {1}. {2}, {3}, {4}.'.format(
+            current_0, current_1, temperature, current_4, current_5),
+        min(term.width - panel_width - 2, 40))
     row_num = 0
 
     art = get_icon(todays)
-    joined_art_conditions = list(itertools.izip_longest(wrapped, art))
+    joined_art_conditions = list(itertools.zip_longest(wrapped, art))
     last_line = lambda row_num: row_num == len(joined_art_conditions) - 1
     for row_num, (row_txt, art_txt) in enumerate(joined_art_conditions):
         echo(term.move(bottom + next_margin + row_num, 1))
@@ -510,26 +592,27 @@ def main():
     while True:
         echo(u'\r\n\r\n')
         location = session.user.get('location', dict())
-        search = location.get('city', u'') + ', ' + location.get('state', u'')
         disp_search_help()
-        search = get_zipsearch(search)
+        search = get_zipsearch(location_name(location))
         if search is None or 0 == len(search):
             # exit (no selection)
             return
 
         locations = do_search(term, search)
+        if 0 == len(locations):
+            continue
 
-        if 0 != len(locations):
-            location = (locations.pop() if 1 == len(locations)
-                        else chose_location(locations) or dict())
+        location = (locations.pop() if 1 == len(locations)
+                    else chose_location(locations))
+        if location is None:
+            # canceled
+            continue
 
-        root = fetch_weather(location.get('postal'))
-        if root is None:
+        todays, forecast = fetch_weather(location)
+        if todays is None:
             # exit (weather not found)
             return
 
-        todays = parse_todays_weather(root)
-        forecast = parse_forecast(root)
         if session.user.get('centigrade', None) is None:
             # request C/F preference,
             get_centigrade()
@@ -545,6 +628,8 @@ def main():
                            if session.user.handle != 'anonymous' else u'')
             echo(u''.join((term.normal, u'\r\n\r\n',
                            term.move_x(5),
+                           term.bold_black(ATTRIBUTION),
+                           u'\r\n', term.move_x(5),
                            u'-- press return' + txt_chg_deg + ' --')))
 
             while True:
@@ -553,7 +638,6 @@ def main():
                 if inp.lower() == cf_key:
                     get_centigrade()
                     break
-                elif inp.code == term.KEY_ENTER:
+                elif inp.code == term.KEY_ENTER or inp in (u'\r', u'\n'):
                     chk_save_location(location)
                     return
-

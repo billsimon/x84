@@ -98,7 +98,7 @@ def syncterm_setfont(font_name, font_page=0):
     # "\x1b[0;40 D'
     try:
         font_code = SYNCTERM_FONTMAP.index(font_name)
-    except IndexError:
+    except ValueError:
         raise ValueError("The specified font_name={0!r} is not any of the "
                          "available fonts specified in module {1}, table "
                          "SYNCTERM_FONTMAP. Available values: {2!r}".format(
@@ -113,7 +113,7 @@ def echo(ucs):
     :param str ucs: unicode sequence to write to terminal.
     """
     session = getsession()
-    if not isinstance(ucs, unicode):
+    if isinstance(ucs, bytes):
         warnings.warn('non-unicode: %r' % (ucs,), UnicodeWarning, 2)
         return session.write(ucs.decode('iso8859-1'))
     return session.write(ucs)
@@ -299,7 +299,7 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
 
     # Open the piece
     try:
-        filename = os.path.relpath(random.choice(glob.glob(filepattern)))
+        filename = random.choice(glob.glob(filepattern))
     except IndexError:
         filename = None
 
@@ -314,15 +314,19 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
     file_basename = os.path.basename(filename)
 
     # Parse the piece
-    parsed = SAUCE(filename)
+    with open(filename, 'rb') as fin:
+        parsed = SAUCE(fin)
 
     # If no explicit encoding is given, we go through a couple of steps to
     # resolve the possible file encoding:
     if encoding is None:
         # 1. See if the SAUCE record has a font we know about, it's in the
         #    filler
-        if parsed.record and parsed.filler_str in SAUCE_FONT_MAP:
-            encoding = SAUCE_FONT_MAP[parsed.filler_str]
+        font_name = parsed.filler_str
+        if isinstance(font_name, bytes):
+            font_name = font_name.decode('latin-1')
+        if parsed.record and font_name in SAUCE_FONT_MAP:
+            encoding = SAUCE_FONT_MAP[font_name]
 
         # 2. Get the system default art encoding,
         #    or fall-back to cp437
@@ -338,22 +342,21 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
             #         Missing function docstring (col 8)
             session = getsession()
             if session.encoding == 'utf8':
-                return what.decode(encoding)
-            elif session.encoding == 'cp437':
-                return what.decode('cp437')
-            else:
-                return what
+                return what.decode(encoding, 'replace')
+            # session encodings such as cp437 have no "transcoding" between
+            # art encodings: the bytes are displayed as-is.
+            return what.decode(session.encoding, 'replace')
 
     # If auto_mode is disabled, we'll just respect whatever input encoding was
     # selected before
     else:
-        _decode = lambda what: what.decode(encoding)
+        _decode = lambda what: what.decode(encoding, 'replace')
 
     # For wide terminals, center piece on screen using cursor movement
     # when center=True.
     padding = u''
     if center and term.width > 81:
-        padding = term.move_x((term.width / 2) - 40)
+        padding = term.move_x((term.width // 2) - 40)
     lines = _decode(parsed.data).splitlines()
     for idx, line in enumerate(lines):
 
@@ -394,5 +397,9 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
 
 def from_cp437(text):
     """ Deprecated form of ``bytes.decode('cp437_art')``. """
-    warnings.warn('from_cp437() is deprecated, use bytes.decode("cp437_art")')
+    warnings.warn('from_cp437() is deprecated, use bytes.decode("cp437_art")',
+                  DeprecationWarning, 2)
+    if isinstance(text, str):
+        # python 2 callers may have decoded bytes as latin-1 first.
+        text = text.encode('latin-1')
     return text.decode('cp437_art')

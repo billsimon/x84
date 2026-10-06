@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 """ x84net message poll for x/84. """
 
 # std imports
@@ -18,7 +18,8 @@ import requests
 def get_token(network):
     """ get token for authentication """
     tm_value = int(time.time())
-    token = hashlib.sha256('{0}{1}'.format(network['token'], tm_value))
+    token = hashlib.sha256('{0}{1}'.format(network['token'], tm_value)
+                           .encode('utf8'))
     return '{0}|{1}|{2}'.format(network['board_id'],
                                 token.hexdigest(),
                                 tm_value)
@@ -42,15 +43,17 @@ def prepare_message(msg, network, parent):
 def pull_rest(net, last_msg_id):
     """ pull messages for a given network newer than the 'last' message idx """
     url = '%smessages/%s/%s' % (net['url_base'], net['name'], last_msg_id)
+    timeout = 60
 
     log = logging.getLogger(__name__)
 
     try:
         req = requests.get(url,
                            headers={'Auth-X84net': get_token(net)},
-                           verify=net['verify'])
+                           verify=net['verify'],
+                           timeout=timeout)
     except requests.ConnectionError as err:
-        log.warn('[{net[name]}] ConnectionError in pull_rest: {err}'
+        log.warning('[{net[name]}] ConnectionError in pull_rest: {err}'
                  .format(net=net, err=err))
         return False
     except Exception as err:
@@ -84,7 +87,8 @@ def push_rest(net, msg, parent):
         req = requests.put(url,
                            headers={'Auth-X84net': get_token(net)},
                            data=data,
-                           verify=net['verify'])
+                           verify=net['verify'],
+                           timeout=60)
     except Exception as err:
         log.exception('[{net[name]}] exception in push_rest: {err}'
                       .format(net=net, err=err))
@@ -148,7 +152,7 @@ def get_networks():
         if ca_path:
             ca_path = os.path.expanduser(ca_path)
             if not os.path.isfile(ca_path):
-                log.warn("File not found for Config section [{section}], "
+                log.warning("File not found for Config section [{section}], "
                          "option {key}, value={ca_path}.  default ca_verify "
                          "will be used. ".format(section=section,
                                                  key='ca_path',
@@ -176,6 +180,7 @@ def get_last_msg_id(last_file):
     except IOError:
         # So, create it; but this too, may raise an
         # OSError (Permission Denied), handled by caller.
+        os.makedirs(os.path.dirname(last_file), exist_ok=True)
         with open(last_file, 'w') as last_fp:
             last_fp.write(str(last_msg_id))
 
@@ -210,8 +215,9 @@ def poll_network_for_messages(net):
         return
 
     transdb = DBProxy('{0}trans'.format(net['name']), use_session=False)
-    transkeys = transdb.keys()
-    msgs = sorted(msgs, cmp=lambda x, y: cmp(int(x['id']), int(y['id'])))
+    # database keys are always str, whereas message ids of json are int.
+    transkeys = set(str(key) for key in transdb.keys())
+    msgs = sorted(msgs, key=lambda msg: int(msg['id']))
 
     # store messages locally, saving their translated IDs to the transdb
     for msg in msgs:
@@ -224,28 +230,28 @@ def poll_network_for_messages(net):
         store_msg.tags.add(u''.join((net['name'])))
 
         if msg['recipient'] is None and u'public' not in msg['tags']:
-            log.warn("[{net[name]}] No recipient (msg_id={msg[id]}), "
+            log.warning("[{net[name]}] No recipient (msg_id={msg[id]}), "
                      "adding 'public' tag".format(net=net, msg=msg))
             store_msg.tags.add(u'public')
 
         if (msg['parent'] is not None and
                 str(msg['parent']) not in transkeys):
-            log.warn('[{net[name]}] No such parent message ({msg[parent]}, '
+            log.warning('[{net[name]}] No such parent message ({msg[parent]}, '
                      'msg_id={msg[id]}), removing reference.'
                      .format(net=net, msg=msg))
         elif msg['parent'] is not None:
-            store_msg.parent = int(transdb[msg['parent']])
+            store_msg.parent = int(transdb[str(msg['parent'])])
 
-        if msg['id'] in transkeys:
-            log.warn('[{net[name]}] dupe (msg_id={msg[id]}) discarded.'
+        if str(msg['id']) in transkeys:
+            log.warning('[{net[name]}] dupe (msg_id={msg[id]}) discarded.'
                      .format(net=net, msg=msg))
         else:
             # do not save this message to network, we already received
             # it from the network, set send_net=False
             store_msg.save(send_net=False, ctime=to_localtime(msg['ctime']))
             with transdb:
-                transdb[msg['id']] = store_msg.idx
-            transkeys.append(msg['id'])
+                transdb[str(msg['id'])] = store_msg.idx
+            transkeys.add(str(msg['id']))
             log.info('[{net[name]}] Processed (msg_id={msg[id]}) => {new_id}'
                      .format(net=net, msg=msg, new_id=store_msg.idx))
 
@@ -273,12 +279,12 @@ def publish_network_messages(net):
     msgdb = DBProxy(MSGDB, use_session=False)
 
     # publish each message
-    for msg_id in sorted(queuedb.keys(),
-                         cmp=lambda x, y: cmp(int(x), int(y))):
+    for msg_id in sorted(queuedb.keys(), key=int):
         if msg_id not in msgdb:
-            log.warn('[{net[name]}] No such message (msg_id={msg_id})'
+            log.warning('[{net[name]}] No such message (msg_id={msg_id})'
                      .format(net=net, msg_id=msg_id))
-            del queuedb[msg_id]
+            with queuedb:
+                del queuedb[msg_id]
             continue
 
         msg = msgdb[msg_id]
@@ -291,7 +297,7 @@ def publish_network_messages(net):
             if len(matches) > 0:
                 trans_parent = matches[0]
             else:
-                log.warn('[{net[name]}] Parent ID {msg.parent} '
+                log.warning('[{net[name]}] Parent ID {msg.parent} '
                          'not in translation-DB (msg_id={msg_id})'
                          .format(net=net, msg=msg, msg_id=msg_id))
 
@@ -301,7 +307,7 @@ def publish_network_messages(net):
                       .format(net=net, msg_id=msg_id))
             continue
 
-        if trans_id in transdb.keys():
+        if str(trans_id) in set(str(key) for key in transdb.keys()):
             log.error('[{net[name]}] trans_id={trans_id} conflicts with '
                       '(msg_id={msg_id})'
                       .format(net=net, trans_id=trans_id, msg_id=msg_id))
@@ -311,7 +317,7 @@ def publish_network_messages(net):
 
         # transform, and possibly duplicate(?) message ..
         with transdb, msgdb, queuedb:
-            transdb[trans_id] = msg_id
+            transdb[str(trans_id)] = msg_id
             msg.body = u''.join((msg.body, format_origin_line()))
             msgdb[msg_id] = msg
             del queuedb[msg_id]
@@ -328,7 +334,11 @@ def poller(poll_interval):
 
     if networks:
         while True:
-            do_poll(networks)
+            try:
+                do_poll(networks)
+            except Exception as err:
+                # do not let any one failure end the poller thread.
+                log.exception('message poll failed: {0}'.format(err))
             time.sleep(poll_interval)
     else:
         log.error(u'No networks configured for poll/publish.')
@@ -371,10 +381,12 @@ def do_poll(networks):
     Function is called periodically by :func:`poller`.
     """
     # pull-from all networks
-    map(poll_network_for_messages, networks)
+    for network in networks:
+        poll_network_for_messages(network)
 
     # publish-to all networks
-    map(publish_network_messages, networks)
+    for network in networks:
+        publish_network_messages(network)
 
 if __name__ == '__main__':
     # load only message polling module when executing this script directly.

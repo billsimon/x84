@@ -27,6 +27,17 @@ from paramiko import (
 flagged_dirname = '__flagged__'
 uploads_dirname = '__uploads__'
 
+#: os.open() flags that permit modification of a file.
+WRITE_FLAGS = (os.O_WRONLY | os.O_RDWR | os.O_APPEND |
+               os.O_CREAT | os.O_TRUNC)
+
+
+def prepare_root(root):
+    """ Create sftp ``root`` folder and its uploads folder, if necessary. """
+    uploads = os.path.join(root, uploads_dirname)
+    if not os.path.isdir(uploads):
+        os.makedirs(uploads)
+
 
 class X84SFTPHandle(SFTPHandle):
 
@@ -70,7 +81,7 @@ class X84SFTPServer(SFTPServerInterface):
         self.log = logging.getLogger(__name__)
 
         # root file folder,
-        self.root = get_ini(section='sftp', key='root')
+        self.root = os.path.expanduser(get_ini(section='sftp', key='root'))
 
         # default file mode for uploaded files,
         _base = 8  # (value is octal!)
@@ -79,10 +90,13 @@ class X84SFTPServer(SFTPServerInterface):
 
         # allow anonymous login where enabled, otherwise use the
         # given `username' authenticated by ssh
-        from x84.bbs.userbase import get_user, User
+        from x84.bbs.userbase import get_user, find_user, User
         _ssh_session = kwargs.pop('ssh_session')
-        self.user = (User(u'anonymous') if _ssh_session.anonymous
-                     else get_user(_ssh_session.username))
+        handle = None
+        if not (_ssh_session.anonymous or _ssh_session.new):
+            handle = find_user(_ssh_session.username)
+        self.user = (get_user(handle) if handle is not None
+                     else User(u'anonymous'))
         self.flagged = set()
 
         SFTPServerInterface.__init__(self, *args, **kwargs)
@@ -116,7 +130,16 @@ class X84SFTPServer(SFTPServerInterface):
 
     def _is_uploaddir(self, path):
         """ Check if this is the upload directory. """
-        return (path == '/{0}'.format(uploads_dirname))
+        # pylint: disable=E1101
+        #         Instance of 'X84SFTPServer' has no 'canonicalize' member
+        return self.canonicalize(path) == '/{0}'.format(uploads_dirname)
+
+    def _is_upload(self, path):
+        """ Check if this is a file within the upload directory. """
+        # pylint: disable=E1101
+        #         Instance of 'X84SFTPServer' has no 'canonicalize' member
+        return (os.path.dirname(self.canonicalize(path)) ==
+                '/{0}'.format(uploads_dirname))
 
     def list_folder(self, path):
         """ List contents of a folder. """
@@ -131,9 +154,12 @@ class X84SFTPServer(SFTPServerInterface):
             elif flagged_dirname in path:
                 self.flagged = self.user.get('flaggedfiles', set())
                 for fname in self.flagged:
-                    rname = fname
-                    attr = SFTPAttributes.from_stat(os.stat(rname))
-                    attr.filename = fname[fname.rindex('/') + 1:]
+                    try:
+                        attr = SFTPAttributes.from_stat(os.stat(fname))
+                    except OSError:
+                        # flagged file has since been removed
+                        continue
+                    attr.filename = os.path.basename(fname)
                     out.append(attr)
                 return out
             flist = os.listdir(rpath)
@@ -157,7 +183,10 @@ class X84SFTPServer(SFTPServerInterface):
                 pstripped = path[path.rindex('/') + 1:]
                 if fstripped == pstripped:
                     self.log.debug('file is actually {0}'.format(fname))
-                    return SFTPAttributes.from_stat(fname)
+                    try:
+                        return SFTPAttributes.from_stat(os.stat(fname))
+                    except OSError as err:
+                        return SFTPServer.convert_errno(err.errno)
         path = self._realpath(path)
         try:
             return SFTPAttributes.from_stat(os.stat(path))
@@ -175,7 +204,10 @@ class X84SFTPServer(SFTPServerInterface):
                 pstripped = path[path.rindex('/') + 1:]
                 if fstripped == pstripped:
                     self.log.debug('file is actually {0}'.format(fname))
-                    return SFTPAttributes.from_stat(fname)
+                    try:
+                        return SFTPAttributes.from_stat(os.lstat(fname))
+                    except OSError as err:
+                        return SFTPServer.convert_errno(err.errno)
         path = self._realpath(path)
         try:
             return SFTPAttributes.from_stat(os.lstat(path))
@@ -184,13 +216,15 @@ class X84SFTPServer(SFTPServerInterface):
 
     def open(self, path, flags, attr):
         """ Up/download the given path. """
-        self.log.debug('lstat({0!r}, {1!r}, {2!r})'
+        self.log.debug('open({0!r}, {1!r}, {2!r})'
                        .format(path, flags, attr))
+        is_upload = self._is_upload(path)
         path = self._realpath(path)
-        if (flags & os.O_CREAT and (uploads_dirname not in path and
-                                    not self.user.is_sysop) or
-                (uploads_dirname in path and os.path.exists(path))):
-            return SFTP_PERMISSION_DENIED
+        if flags & WRITE_FLAGS and not self.user.is_sysop:
+            # only sysops may modify files; others may only create new
+            # files in the uploads folder, never replacing existing files.
+            if not is_upload or os.path.exists(path):
+                return SFTP_PERMISSION_DENIED
         try:
             binary_flag = getattr(os, 'O_BINARY', 0)
             flags |= binary_flag

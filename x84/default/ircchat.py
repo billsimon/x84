@@ -13,6 +13,11 @@ from x84.bbs import (ScrollingEditor, getsession, echo, getterminal,
 
 # 3rd party
 import irc.client
+from jaraco.stream.buffer import LenientDecodingLineBuffer
+
+# tolerate any text encoding received from irc servers, rather than raising
+# UnicodeDecodeError for messages not encoded as utf-8.
+irc.client.ServerConnection.buffer_class = LenientDecodingLineBuffer
 
 #: how many lines of scrollback to save for redrawing the interface?
 MAX_SCROLLBACK = get_ini('irc', 'max_scrollback', getter='getint') or 200
@@ -21,22 +26,27 @@ MAX_SCROLLBACK = get_ini('irc', 'max_scrollback', getter='getint') or 200
 MAX_INPUT = get_ini('irc', 'max_input', getter='getint') or 200
 
 #: irc server
-SERVER = get_ini('irc', 'server') or 'irc.shaw.ca'
+SERVER = get_ini('irc', 'server') or 'irc.libera.chat'
 
 #: irc port
-PORT = get_ini('irc', 'port', getter='getint') or 6667
+PORT = get_ini('irc', 'port', getter='getint') or 6697
 
 #: irc channel
-CHANNEL = get_ini('irc', 'channel') or '#1984'
+CHANNEL = get_ini('irc', 'channel') or '#x84'
 
 #: irc server password
 PASSWORD = get_ini('irc', 'password') or None
 
 #: maximum length irc nicks
-MAX_NICK = get_ini('irc', 'max_nick', getter='getint') or 9
+MAX_NICK = (get_ini('irc', 'max_nick', getter='getint') or
+            get_ini('irc', 'maxnick', getter='getint') or 9)
 
 #: whether irc server requires ssl
 ENABLE_SSL = get_ini('irc', 'ssl', getter='getboolean')
+
+#: whether to verify the irc server's ssl certificate
+SSL_VERIFY = (get_ini('irc', 'ssl_verify', getter='getboolean')
+              if get_ini('irc', 'ssl_verify') else True)
 
 #: Whether to display PRIVNOTICE messages (such as motd)
 ENABLE_PRIVNOTICE = get_ini('irc', 'enable_privnotice', getter='getboolean')
@@ -178,7 +188,7 @@ class IRCChat(object):
         fgc = u'{0} Foreground: '
 
         for x in range(0, 8):
-            val = u'0' + unicode(x)
+            val = u'0' + str(x)
 
             if x == 0:
                 fgc += self.term.on_white
@@ -187,7 +197,7 @@ class IRCChat(object):
                              self.term.normal, u' '))
 
         for x in range(0, 8):
-            val = unicode(x + 8)
+            val = str(x + 8)
 
             if len(val) == 1:
                 val = u'0' + val
@@ -200,7 +210,7 @@ class IRCChat(object):
         bgc = u'{0} Background: '
 
         for x in range(0, 8):
-            val = u'b' + unicode(x)
+            val = u'b' + str(x)
 
             if x > 0:
                 bgc += self.term.bright_white
@@ -224,7 +234,8 @@ class IRCChat(object):
     def on_disconnect(self, connection, event):
         """ Disconnected; send quit event to end the main loop """
         # pylint: disable=R0201,W0613
-        why = filter(None, event.arguments + [event.target])
+        why = [_why for _why in list(event.arguments) + [event.target]
+               if _why]
         self.session.buffer_event('irc-quit', ' '.join(why))
 
     def on_nicknameinuse(self, connection, event):
@@ -419,9 +430,15 @@ def establish_connection(term, session):
     scrollback = collections.deque(maxlen=MAX_SCROLLBACK)
     kwargs = dict()
     if ENABLE_SSL:
-        from ssl import wrap_socket
+        import functools
+        import ssl
         from irc.connection import Factory
-        kwargs['connect_factory'] = Factory(wrapper=wrap_socket)
+        context = ssl.create_default_context()
+        if not SSL_VERIFY:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+        kwargs['connect_factory'] = Factory(wrapper=functools.partial(
+            context.wrap_socket, server_hostname=SERVER))
     if PASSWORD is not None:
         kwargs['password'] = PASSWORD
 
@@ -434,8 +451,8 @@ def establish_connection(term, session):
     try:
         # pylint: disable=W0142
         client.connect(SERVER, PORT, irc_handle, **kwargs)
-    except irc.client.ServerConnectionError:
-        echo(term.bold_red(u'Connection error!'))
+    except irc.client.ServerConnectionError as err:
+        echo(term.bold_red(u'Connection error: {0}'.format(err)))
         term.inkey(3)
         raise EOFError()
 
@@ -452,7 +469,7 @@ def establish_connection(term, session):
         elif event == 'input':
             session.buffer_input(data, pushback=True)
             inp = term.inkey(0)
-            while not inp:
+            while inp:
                 if inp.lower() == u'q' or inp.code == term.KEY_ESCAPE:
                     echo(u'Canceled!')
                     raise EOFError()
@@ -477,7 +494,7 @@ def establish_connection(term, session):
         elif event == 'input':
             session.buffer_input(data, pushback=True)
             inp = term.inkey(0)
-            while not inp:
+            while inp:
                 if inp.lower() == u'q' or inp.code == term.KEY_ESCAPE:
                     echo(u'Canceled!')
                     raise EOFError()
@@ -617,13 +634,13 @@ def mirc_encode(term, text):
                 attr = u'\x0f'
             elif val[0] == 'b':
                 int_value = int(val[1], 10)
-                attr = u''.join((u'\x030,', unicode(mirc_map[int_value])))
+                attr = u''.join((u'\x030,', str(mirc_map[int_value])))
         else:
             if val.startswith('0'):
                 val = val[1:]
 
             int_value = int(val, 10)
-            attr = u''.join((u'\x03', unicode(mirc_map[int_value])))
+            attr = u''.join((u'\x03', str(mirc_map[int_value])))
 
         output += text[ptr:match.start()] + attr
         ptr = match.end()
@@ -695,7 +712,7 @@ def main():
     session.flush_event('irc')
 
     # move to bottom of screen, reset attribute
-    echo(term.pos(term.height) + term.normal)
+    echo(term.move(term.height, 0) + term.normal)
 
     # create a new, empty screen
     echo(u'\r\n' * (term.height + 1))

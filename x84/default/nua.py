@@ -5,7 +5,6 @@ New user account script for x/84.
 This script is closely coupled with, and dependend on by profile.py.
 """
 # std imports
-from __future__ import division
 import collections
 import logging
 import os
@@ -63,7 +62,7 @@ invalid_usernames = get_ini(
 #: login name validation as a regular expression
 username_re_validator = get_ini(
     section='nua', key='handle_validation'
-) or ['^[A-Za-z0-9]{3,11}$']
+) or '^[A-Za-z0-9]{3,11}$'
 
 
 #: maximum length of user 'location' field
@@ -274,7 +273,7 @@ def do_nua(user):
     idx = 0
     validation_fields = get_validation_fields(user)
     while idx != len(validation_fields):
-        field = validation_fields.values()[idx]
+        field = list(validation_fields.values())[idx]
         echo(fixate_next(term, newlines=1))
         if field.description:
             show_description(term, field.description,

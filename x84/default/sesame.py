@@ -87,8 +87,10 @@ def acquire_node(session, name):
         event = 'lock-{name}/{node}'.format(name=name, node=node)
         session.send_event(event, ('acquire', None))
         if session.read_event(event):
-            yield node
-            session.send_event(event, ('release', None))
+            try:
+                yield node
+            finally:
+                session.send_event(event, ('release', None))
             return
 
     # node could not be acquired

@@ -4,9 +4,8 @@ Hacker news script for x/84.
 Lets you browse and read popular articles on news.ycombinator.com.
 """
 # std imports
-from __future__ import division
+import urllib.parse
 import collections
-import urlparse
 import textwrap
 import math
 import sys
@@ -34,7 +33,7 @@ COLOR_VIEW = get_ini(
     section='hackernews', key='color_view'
 ) or "black_on_magenta"
 
-USER_AGENT = 'Lynx/2.8.7rel.2 libwww-FM/2.14 SSL-MM/1.4.1 OpenSSL/1.0.0a'
+USER_AGENT = 'Lynx/2.9.2 libwww-FM/2.14 SSL-MM/1.4.1 OpenSSL/3.0.13'
 RSS_URL = 'https://news.ycombinator.com/rss'
 RSS_TITLE = 'Hacker News'
 ARTICLE_LIMIT = 100
@@ -258,8 +257,8 @@ def view_article(session, term, url, title):
         term.inkey()
         return
 
-    # translate to our session-native encoding,
-    req.encoding = session.encoding
+    # decoded by the document's declared (or detected) encoding; output is
+    # encoded to the session's encoding as it is written.
     html_text = req.text
 
     keyset = get_keyset(term)
@@ -357,8 +356,8 @@ def view_article_summaries(session, term, rss_url, rss_title):
     # fetch rss feed articles
     echo(term.move(term.height // 2, 0))
     echo(term.center('Fetching {0} ...'.format(term.bold(rss_url))).rstrip())
-    result = feedparser.parse(rss_url)
-    if result.get('status') != 200:
+    result = feedparser.parse(rss_url, agent=USER_AGENT)
+    if not result.entries:
         # display 404, 500, or whatever non-200 code returned.
         moveto_lastline = term.move(term.height, 0)
         echo(moveto_lastline)
@@ -368,8 +367,8 @@ def view_article_summaries(session, term, rss_url, rss_title):
 
     articles = [Article(title=post.title,
                         link=post.link,
-                        comments=post.comments,
-                        netloc=urlparse.urlparse(post.link).netloc)
+                        comments=post.get('comments', post.link),
+                        netloc=urllib.parse.urlparse(post.link).netloc)
                 for post in result.entries][:ARTICLE_LIMIT]
     keyset = get_keyset(term)
     bottom = -1

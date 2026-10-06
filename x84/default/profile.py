@@ -4,7 +4,6 @@ User profile editor script for x/84.
 This script is closely coupled with, and dependent upon nua.py.
 """
 # std imports
-from __future__ import division
 import collections
 import fnmatch
 import string
@@ -115,7 +114,8 @@ def get_display_fields(user, point):
     # maybe it gives them confidence that we don't know their actual password.
     _password = u''
     if user.handle != 'anonymous':
-        _password = u''.join(user.password)
+        # the password digest is never displayed.
+        _password = u'*' * 8 if user.password != (None, None) else u''
     fields['password'] = field(
         value=_password,
         field_fmt=u'{lb}{key}{rb}assword{colon} {value}',
@@ -373,8 +373,9 @@ def do_command(term, session, inp, fields, tgt_user, point):
             elif field_name == 'pubkey':
                 if tgt_user.handle != 'anonymous':
                     tgt_user[field_name] = inp
-        elif field_name in ('groups'):
-            new_groups = set(filter(None, set(map(unicode.strip, inp.split(',')))))
+        elif field_name == 'groups':
+            new_groups = set(grp.strip() for grp in inp.split(',')
+                             if grp.strip())
             for old_grp in tgt_user.groups.copy():
                 if old_grp not in new_groups:
                     tgt_user.group_del(old_grp)
@@ -502,7 +503,7 @@ def main(handle=None):
     dirty = -1
     session, term = getsession(), getterminal()
     tgt_user = get_user(handle) if handle else session.user
-    legal_input_characters = string.letters + u'<>'
+    legal_input_characters = string.ascii_letters + u'<>'
 
     # re-display entire screen on loop,
     while True:
@@ -537,10 +538,10 @@ def main(handle=None):
                 dirty = -1
                 break
 
-            inp = data
-            if inp in legal_input_characters:
+            inp = data.decode(session.encoding, 'replace')
+            if len(inp) == 1 and inp in legal_input_characters:
                 # display command input
-                echo(inp.decode('ascii'))
+                echo(inp)
 
             if inp == u'q':
                 # [q]uit
@@ -556,7 +557,7 @@ def main(handle=None):
             elif inp == u'd':
                 # yes, you can delete yourself !!
                 if delete_user(term, tgt_user, point_prompt):
-                    if tgt_user == session.user:
+                    if tgt_user.handle == session.user.handle:
                         # but if you delete yourself,
                         # you must logoff.
                         goto('logoff')
@@ -570,7 +571,7 @@ def main(handle=None):
             elif inp == u'>' and session.user.is_sysop:
                 tgt_user = get_next_user(tgt_user)
                 break
-            elif inp in string.letters:
+            elif len(inp) == 1 and inp in string.ascii_letters:
                 if do_command(
                         term, session, inp, fields, tgt_user, point_prompt):
                     # when returning True, perform full-screen refresh,
@@ -579,7 +580,7 @@ def main(handle=None):
                     # otherwise, clean prompt field
                     time.sleep(0.2)
                     echo(u'\b \b')
-            elif inp in legal_input_characters:
+            elif len(inp) == 1 and inp in legal_input_characters:
                 # though legal, not authorized: clean prompt field
                 time.sleep(0.2)
                 echo(u'\b \b')

@@ -1,9 +1,10 @@
 """ oneliners web module for x/84. """
 
 import web
+import html
 import json
 from x84.bbs import DBProxy
-from x84.bbs.ini import CFG
+from x84.bbs.ini import get_ini
 
 
 class OnelinersApi(object):
@@ -14,24 +15,24 @@ class OnelinersApi(object):
         """ Return last x oneliners """
 
         num = int(num)
-        oneliners = DBProxy('oneliner', use_session=False).items()
-        oneliners = [(int(k), v) for (k, v) in
-                     DBProxy('oneliner', use_session=False).items()]
+        oneliners = sorted((int(k), v) for (k, v) in
+                           DBProxy('oneliner', use_session=False).items())
         last = oneliners[-num:]
 
         # output JSON instead?
         if 'json' in web.input(_method='get'):
             return json.dumps(last)
 
-        board = CFG.get('system', 'bbsname', 'x/84')
+        board = get_ini('system', 'bbsname') or 'x/84'
         page_title = 'Last {num} Oneliners on {board}'.format(
-            num=num, board=board)
+            num=num, board=html.escape(board))
         oneliners_html = ''
 
         for line in last:
             val = line[1]
             oneliners_html += '<li><b>{alias}:</b> {oneliner}</li>'.format(
-                alias=val['alias'], oneliner=val['oneliner'])
+                alias=html.escape(val['alias']),
+                oneliner=html.escape(val['oneliner']))
 
         web.header('Content-Type', 'text/html; charset=utf-8', unique=True)
         output = """

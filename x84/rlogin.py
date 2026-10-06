@@ -6,10 +6,8 @@ only ssh or telnet.  rlogin is a very insecure and not recommended!
 """
 # http://www.ietf.org/rfc/rfc1282.txt
 
-import logging
 import select
 import socket
-import array
 import errno
 import time
 
@@ -35,7 +33,7 @@ class RLoginClient(BaseClient):
         super(RLoginClient, self).__init__(sock, address_pair, on_naws)
 
         # Urgent send buffer (MSG_OOB)
-        self.usend_buffer = array.array('c')
+        self.usend_buffer = bytearray()
 
     def recv_ready(self):
         """ Whether data is awaiting on the telnet socket. """
@@ -49,14 +47,14 @@ class RLoginClient(BaseClient):
         :raises Disconnected: client has disconnected (cannot write to socket).
         """
         if len(self.usend_buffer) > 0:
-            ready_bytes = bytes(''.join(self.usend_buffer))
-            self.usend_buffer = array.array('c')
+            ready_bytes = bytes(self.usend_buffer)
+            self.usend_buffer = bytearray()
 
             def _send_urgent(send_bytes):
                 """ Sent urgent (out of band) TCP packet. """
                 try:
                     return self.sock.send(send_bytes, socket.MSG_OOB)
-                except socket.error as err:
+                except OSError as err:
                     if err.errno in (errno.EDEADLK, errno.EAGAIN):
                         self.log.debug('{self.addrport}: {err} '
                                        '(bandwidth exceed)'
@@ -66,10 +64,10 @@ class RLoginClient(BaseClient):
 
             sent = _send_urgent(ready_bytes)
             if sent < len(ready_bytes):
-                self.usend_buffer.fromstring(ready_bytes[sent:])
+                self.usend_buffer[0:0] = ready_bytes[sent:]
+            return sent
 
-        else:
-            super(RLoginClient, self).send()
+        return super(RLoginClient, self).send()
 
     def send_ready(self):
         """ Whether any data is buffered for delivery. """
@@ -77,7 +75,7 @@ class RLoginClient(BaseClient):
 
     def send_urgent_str(self, bstr):
         """ Buffer urgent (OOB) message to client from bytestring. """
-        self.usend_buffer.fromstring(bstr)
+        self.usend_buffer.extend(bstr)
 
 
 class ConnectRLogin(BaseConnect):
@@ -123,7 +121,7 @@ class ConnectRLogin(BaseConnect):
             # The server returns a zero byte to indicate that it has received
             # these strings and is now in data transfer mode.
             if self.client.is_active():
-                self.client.send_str(bytes('\x00'))
+                self.client.send_str(b'\x00')
 
                 # The remote server indicates to the client that it can accept
                 # window size change information by requesting a window size
@@ -133,7 +131,7 @@ class ConnectRLogin(BaseConnect):
                 #
                 # Disabled: neither SyncTERM or BSD rlogin honors this, and
                 # we haven't got any code to parse it. Its in the RFC but ..
-                self.client.send_urgent_str(bytes('\x80'))
+                self.client.send_urgent_str(b'\x80')
 
             matrix_kwargs = {}
             username = parsed.get('server-user-name', 'new')
@@ -151,7 +149,7 @@ class ConnectRLogin(BaseConnect):
             if self.client.is_active():
                 return spawn_client_session(client=self.client,
                                             matrix_kwargs=matrix_kwargs)
-        except socket.error as err:
+        except OSError as err:
             self.log.debug('{client.addrport}: connection closed: {err}'
                            .format(client=self.client, err=err))
         except EOFError:
@@ -174,7 +172,7 @@ class ConnectRLogin(BaseConnect):
         """
         established_msg = ('{client.addrport}: rlogin connection established'
                            .format(client=self.client))
-        data = array.array('c')
+        data = bytearray()
 
         #: maximum size of negotiation string
         MAXLEN = 4096
@@ -191,21 +189,21 @@ class ConnectRLogin(BaseConnect):
             if self.client.input_ready():
                 # data to be received,
                 # read in data.
-                data.fromstring(self.client.get_input())
+                data.extend(self.client.get_input())
 
-            n_nul = data.count('\x00')
+            n_nul = data.count(b'\x00')
             if n_nul >= 3:
                 self.client.env['RLOGIN_CLIENT_NAME'] = {
                     3: 'SyncTERM',
                     4: 'BSD',
-                }.get(n_nul, 'unknown:{0})'.format(n_nul))
+                }.get(n_nul, 'unknown:{0}'.format(n_nul))
                 if self.client.env['RLOGIN_CLIENT_NAME'] == 'SyncTERM':
                     self.client.env['encoding'] = 'cp437'
 
                 self.log.debug('{msg} ({env[RLOGIN_CLIENT_NAME]})'
                                .format(msg=established_msg,
                                        env=self.client.env))
-                return data.tostring()
+                return bytes(data).decode('latin-1')
 
             elif time.time() - st_time >= self.TIME_NEGOTIATE:
                 # too much time has elapsed, give up.
@@ -266,19 +264,17 @@ class ConnectRLogin(BaseConnect):
                 if len(segs):
                     parsed[segname] = segs.pop(0)
 
-            parsed['terminal-type'], parsed['terminal-speed'] = (
+            term_type, _, term_speed = (
                 parsed.pop('terminal-type/speed', 'unknown/0')
-                .split('/', 2))
+                .partition('/'))
+            parsed['terminal-type'] = term_type or 'unknown'
+            parsed['terminal-speed'] = term_speed or '0'
         except ValueError as err:
             self.log.exception("ValueError in parse_connect_data: {err}"
                                .format(err=err))
 
         return parsed
 
-    def _set_sock_opts(self):
-        """ Set the socket in non-blocking mode. """
-        self.client.sock.setblocking(0)
-        self.client.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
 
 class RLoginServer(BaseServer):
@@ -287,36 +283,7 @@ class RLoginServer(BaseServer):
 
     client_factory = RLoginClient
     connect_factory = ConnectRLogin
-
-    def __init__(self, config):
-        """ Class initializer. """
-        self.log = logging.getLogger(__name__)
-        self.config = config
-        self.addr = config.get('rlogin', 'addr')
-        self.port = 513
-        if config.has_option('rlogin', 'port'):
-            # rlogin is coded for port 513, though you could specify an
-            # alternative port if you really wished.
-            self.port = config.getint('rlogin', 'port')
-
-        # bind
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(socket.SOL_SOCKET,
-                                      socket.SO_REUSEADDR, 1)
-        try:
-            self.server_socket.bind((self.addr, self.port))
-            self.server_socket.listen(self.LISTEN_BACKLOG)
-        except socket.error as err:
-            self.log.error('unable to bind {self.addr}:{self.port}: {err}'
-                           .format(self=self, err=err))
-            exit(1)
-
-        self.log.info('rlogin listening on {self.addr}:{self.port}/tcp'
-                      .format(self=self))
-
-    def client_fds(self):
-        """ Return list of rlogin client file descriptors. """
-        fds = [client.fileno() for client in self.clients.values()]
-        # pylint: disable=bad-builtin
-        #         You're drunk, pylint
-        return filter(None, fds)
+    config_section = 'rlogin'
+    # rlogin is coded for port 513, though you could specify an
+    # alternative port if you really wished.
+    default_port = 513

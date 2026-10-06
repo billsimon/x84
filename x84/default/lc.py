@@ -44,7 +44,7 @@ def get_lastcallers(last):
     return sorted([call_record(timeago=timenow - time_called,
                                num_calls=num_calls,
                                location=location,
-                               handle=handle.decode('utf8'))
+                               handle=handle)
                    for handle, (time_called, num_calls, location)
                    in DBProxy('lastcalls').items()])[:last]
 

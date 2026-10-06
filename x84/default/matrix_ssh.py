@@ -20,17 +20,17 @@ who may have already authenticated by some various means.
 
 def main(anonymous=False, new=False, username=''):
     """ Main procedure. """
-    from x84.bbs import echo, goto, find_user, ini
-    topscript = ini.CFG.get('matrix', 'topscript')
-    nuascript = ini.CFG.get('nua', 'script')
+    from x84.bbs import echo, goto, find_user, get_ini, disconnect
+    topscript = get_ini('matrix', 'topscript') or 'top'
+    nuascript = get_ini('nua', 'script') or 'nua'
 
     # http://www.termsys.demon.co.uk/vtansi.htm
     # disable line-wrapping
-    echo(unichr(27) + u'[7l')
+    echo(u'\x1b[7l')
 
     # http://www.xfree86.org/4.5.0/ctlseqs.html
     # Save xterm icon and window title on stack.
-    echo(unichr(27) + u'[22;0t')
+    echo(u'\x1b[22;0t')
 
     if anonymous:
         # user ssh'd in as anonymous@
@@ -40,5 +40,7 @@ def main(anonymous=False, new=False, username=''):
         goto(nuascript)
 
     handle = find_user(username)
-    assert handle is not None, handle
+    if handle is None:
+        # the account was deleted after authentication.
+        disconnect('no such user: {0!r}'.format(username))
     goto(topscript, handle=handle)

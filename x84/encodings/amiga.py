@@ -5,7 +5,6 @@ There is no provided unicode translation map, but we try to approximate the
 Topaz font families as close as possible.
 """
 
-from __future__ import absolute_import
 
 import codecs
 import encodings

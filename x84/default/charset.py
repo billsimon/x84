@@ -52,7 +52,7 @@ def display_prompt(term):
     echo(u'\r\n\r\n')
     width = min(term.width, 80 - prompt_padding)
     for line in term.wrap(prompt_text, width):
-        echo(u' ' * ((term.width - width) / 2))
+        echo(u' ' * ((term.width - width) // 2))
         echo(line + '\r\n')
 
     echo(u'\r\n')

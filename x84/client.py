@@ -1,6 +1,5 @@
 """ Base classes for clients and connections of x/84. """
 
-import array
 import errno
 import logging
 import socket
@@ -43,8 +42,11 @@ class BaseClient(object):
                          ('COLUMNS', 80),
                          ('connection-type', self.kind),
                          ])
-        self.send_buffer = array.array('c')
-        self.recv_buffer = array.array('c')
+        self.send_buffer = bytearray()
+        self.recv_buffer = bytearray()
+        # the send buffer is written by both the engine's main loop and
+        # the on-connect negotiation thread.
+        self._send_lock = threading.RLock()
         self.bytes_received = 0
         self.connect_time = time.time()
         self.last_input_time = time.time()
@@ -56,13 +58,15 @@ class BaseClient(object):
     def fileno(self):
         """ File descriptor number of socket. """
         try:
-            return self.sock.fileno()
-        except socket.error:
+            fileno = self.sock.fileno()
+        except OSError:
             return None
+        # a closed socket returns -1
+        return fileno if fileno >= 0 else None
 
     def input_ready(self):
         """ Whether any data is buffered for reading. """
-        return bool(self.recv_buffer.__len__())
+        return bool(len(self.recv_buffer))
 
     def recv_ready(self):
         """
@@ -82,8 +86,9 @@ class BaseClient(object):
             warnings.warn('send() called on empty buffer', RuntimeWarning, 2)
             return 0
 
-        ready_bytes = bytes(''.join(self.send_buffer))
-        self.send_buffer = array.array('c')
+        with self._send_lock:
+            ready_bytes = bytes(self.send_buffer)
+            self.send_buffer = bytearray()
 
         def _send(send_bytes):
             """
@@ -93,7 +98,7 @@ class BaseClient(object):
             """
             try:
                 return self.sock.send(send_bytes)
-            except socket.error as err:
+            except OSError as err:
                 if err.errno in (errno.EDEADLK, errno.EAGAIN):
                     self.log.debug('{self.addrport}: {err} (bandwidth exceed)'
                                    .format(self=self, err=err))
@@ -102,13 +107,15 @@ class BaseClient(object):
 
         sent = _send(ready_bytes)
         if sent < len(ready_bytes):
-            # re-buffer data that could not be pushed to socket;
-            self.send_buffer.fromstring(ready_bytes[sent:])
+            # re-buffer data that could not be pushed to socket, in front
+            # of any data that may have been buffered meanwhile.
+            with self._send_lock:
+                self.send_buffer[0:0] = ready_bytes[sent:]
         return sent
 
     def send_ready(self):
         """ Whether any data is buffered for delivery. """
-        return bool(self.send_buffer.__len__())
+        return bool(len(self.send_buffer))
 
     def shutdown(self):
         """
@@ -120,7 +127,7 @@ class BaseClient(object):
             self.sock.shutdown(socket.SHUT_RDWR)
             self.log.debug('{self.addrport}: socket shutdown '
                            '{self.__class__.__name__}'.format(self=self))
-        except socket.error:
+        except OSError:
             pass
         self.active = False
         self.sock.close()
@@ -138,14 +145,14 @@ class BaseClient(object):
             if recv == 0:
                 raise Disconnected('Closed by client (EOF)')
 
-        except socket.error as err:
-            if err.errno == errno.EWOULDBLOCK:
-                return 0
+        except BlockingIOError:
+            return 0
+        except OSError as err:
             raise Disconnected('socket_recv error: {0}'.format(err))
 
         self.bytes_received += recv
         self.last_input_time = time.time()
-        self.recv_buffer.fromstring(data)
+        self.recv_buffer.extend(data)
         return recv
 
     def get_input(self):
@@ -154,13 +161,14 @@ class BaseClient(object):
 
         Should be called conditionally when :meth:`input_ready` returns True.
         """
-        data = self.recv_buffer.tostring()
-        self.recv_buffer = array.array('c')
+        data = bytes(self.recv_buffer)
+        self.recv_buffer = bytearray()
         return data
 
     def send_str(self, bstr):
         """ Buffer bytestring for client. """
-        self.send_buffer.fromstring(bstr)
+        with self._send_lock:
+            self.send_buffer.extend(bstr)
 
     def send_unicode(self, ucs, encoding='utf8'):
         """ Buffer unicode string, encoded for client as 'encoding'. """
@@ -201,7 +209,7 @@ class BaseConnect(threading.Thread):
     def __init__(self, client):
         """ Class initializer. """
         self.client = client
-        threading.Thread.__init__(self)
+        threading.Thread.__init__(self, daemon=True)
         self.log = logging.getLogger(self.__class__.__name__)
 
     def banner(self):
@@ -221,7 +229,7 @@ class BaseConnect(threading.Thread):
             self.banner()
             if self.client.is_active():
                 return spawn_client_session(client=self.client)
-        except (Disconnected, socket.error) as err:
+        except (Disconnected, OSError) as err:
             self.log.debug('Connection closed: %s', err)
         finally:
             self.stopped = True

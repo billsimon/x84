@@ -93,6 +93,9 @@ unknown_sleep = get_ini(
 
 #: maximum failed logins before disconect
 login_max_attempts = get_ini(
+    section='matrix', key='max_login_attempts', getter='getint'
+) or get_ini(
+    # misspelled option name of previous versions
     section='matrix', key='max_login_attemps', getter='getint'
 ) or 5
 
@@ -161,7 +164,8 @@ def display_banner(term):
         sep=sep, url=highlight(__url__)))
 
     # display on-connect banner (`art_file`)
-    map(echo, showart(art_file, encoding=art_encoding, center=True))
+    for line in showart(art_file, encoding=art_encoding, center=True):
+        echo(line)
 
     # display various ini-configured login username aliases.
     if new_allowed:
@@ -181,7 +185,7 @@ def authenticate_user(handle, password):
     # artificial delay -- this ensures people cannot guess
     # for user accounts, where existing ones would delay a
     # long while, but unknown users are quickly denied.
-    artificial_delay = max(1.0, random.randrange(0, unknown_sleep * 100) / 100)
+    artificial_delay = max(1.0, random.uniform(0, unknown_sleep))
 
     matching_handle = find_user(handle)
     if matching_handle is None:
@@ -205,6 +209,7 @@ def authenticate_user(handle, password):
 
     log.debug('Failed login for {handle}: wrong password.'
               .format(handle=handle))
+    time.sleep(artificial_delay)
     return False
 
 

@@ -37,7 +37,7 @@ def register_score(handle, score):
 
 def show_scores():
     from x84.bbs import DBProxy, Pager, getterminal
-    from x84.bbs import echo, getsession, ini
+    from x84.bbs import echo, getsession, get_ini
     session, term = getsession(), getterminal()
     allscores = DBProxy('tetris').items()
     if 0 == len(allscores):
@@ -46,7 +46,7 @@ def show_scores():
     # -- since we have so much screen width, columize the scores,
     # the math brings it out to 2 columns, but fmt is adjustable
     pager_title = term.blue_reverse_underline('- hiGh SCOREs -')
-    len_handle = ini.CFG.getint('nua', 'max_user')
+    len_handle = get_ini('nua', 'max_user', getter='getint') or 10
     score_fmt = u'%s %s %s %s'
     len_pos = 2
     len_score = 10
@@ -62,7 +62,7 @@ def show_scores():
     # pre-fesh pager border before fetch
     echo(pager.border() + pager.title(pager_title) + pager.clear())
     highscores = sorted(
-        [(_score, _level, _handle.decode('utf8'))
+        [(_score, _level, _handle)
          for (_handle, (_score, _level, _)) in allscores],
         reverse=True)
     pager.append(score_fmt % (
@@ -116,7 +116,7 @@ def play():
     import time
     from random import randint
     import os
-    from x84.bbs import getterminal, from_cp437, AnsiWindow, syncterm_setfont
+    from x84.bbs import getterminal, AnsiWindow, syncterm_setfont
     from x84.bbs import echo as echo_unbuffered
     term = getterminal()
     field = []
@@ -318,7 +318,8 @@ def play():
     artfile = os.path.join(os.path.dirname(__file__), 'art', 'tetris.ans')
     echo_unbuffered(u'\r\n' * term.height)  # cls
     if os.path.exists(artfile):
-        echo_unbuffered(from_cp437(open(artfile).read()).rstrip())
+        with open(artfile, 'rb') as fin:
+            echo_unbuffered(fin.read().decode('cp437_art').rstrip())
 
     def gotoxy(x, y):
         echo(term.move(y, x))
@@ -331,7 +332,7 @@ def play():
             color = 0
         # Output optimization
         if color % 8 == 0:
-            color = color / 8
+            color = color // 8
         if color == lastcolor:
             echo(c)
         else:
@@ -340,7 +341,7 @@ def play():
             else:
                 fg = '37'
             if color >= 8:
-                bg = ';%d' % (40 + color / 8)
+                bg = ';%d' % (40 + color // 8)
             else:
                 bg = ''
             echo('\x1b[0;' + fg + bg + 'm')
@@ -352,7 +353,7 @@ def play():
         lastcolor = ''
         for y in range(0, field_height, 2):
             # gotoxy(field_width,2+y/2)
-            gotoxy(fieldx1 + 2, fieldy1 + 1 + y / 2)
+            gotoxy(fieldx1 + 2, fieldy1 + 1 + y // 2)
             # Which block to show, full, half-up, half-down or empty.
             for x in range(field_width):
                 color = field[y][x] + field[y + 1][x] * 8
@@ -370,7 +371,7 @@ def play():
                     c = ' '
                 # Output optimization
                 if color % 8 == 0:
-                    color = color / 8
+                    color = color // 8
                 if color == lastcolor:
                     echo(c)
                 else:
@@ -379,7 +380,7 @@ def play():
                     else:
                         fg = '37'
                     if color >= 8:
-                        bg = ';%d' % (40 + color / 8)
+                        bg = ';%d' % (40 + color // 8)
                     else:
                         bg = ''
                     echo('\x1b[0;' + fg + bg + 'm')
@@ -531,15 +532,15 @@ def play():
                 # Is the player dead?
                 if ypos <= -len(layout[p][0]):
                     death_win = AnsiWindow(height=6, width=40,
-                                           yloc=fieldy1 + 10 / 2, xloc=fieldx1 - 11)
+                                           yloc=fieldy1 + 10 // 2, xloc=fieldx1 - 11)
                     death_win.colors['border'] = term.bold_black
                     echo_unbuffered(death_win.clear() + death_win.border())
                     echo_unbuffered(
-                        term.move(fieldy1 + 10 / 2 + 1, fieldx1 - 11))
+                        term.move(fieldy1 + 10 // 2 + 1, fieldx1 - 11))
                     echo_unbuffered((
                                     u'!! gAME OVeR!! Score was: %i' % (score,)).center(40))
                     echo_unbuffered(
-                        term.move(fieldy1 + 10 / 2 + 3, fieldx1 - 11))
+                        term.move(fieldy1 + 10 // 2 + 3, fieldx1 - 11))
                     echo_unbuffered(u'press RETURN'.center(40))
                     while True:
                         inp = term.inkey()

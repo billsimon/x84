@@ -19,16 +19,22 @@ class StaticApp(object):
         """ Respond to GET method request. """
         if not filename:
             return web.redirect('/www-static/')
-        file_url = os.path.join(*filter(lambda txt: txt != '..',
-                                        filename.split('/')))
-        myfile = os.path.join(StaticApp.static_root, file_url)
+        segments = [txt for txt in filename.split('/')
+                    if txt not in ('', '.', '..')]
+        myfile = os.path.join(StaticApp.static_root, *segments)
+        root = os.path.realpath(StaticApp.static_root)
+        if os.path.commonpath((root, os.path.realpath(myfile))) != root:
+            # symbolic link outside of document root
+            return web.notfound()
         if os.path.isfile(myfile):
             # we're serving a file; use the proper mime type
-            mime = mimetypes.guess_type(myfile)
+            mime = (mimetypes.guess_type(myfile)[0] or
+                    'application/octet-stream')
             _, ext = os.path.splitext(myfile.lower())
             mime = StaticApp.mime_types.get(ext, mime)
             web.header('Content-Type', mime, unique=True)
-            return open(myfile, 'rb').read()
+            with open(myfile, 'rb') as fin:
+                return fin.read()
         elif os.path.isdir(myfile):
             # we're serving a directory; try directory/index.html instead
             if not filename.endswith('/'):

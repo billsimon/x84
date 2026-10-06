@@ -8,8 +8,9 @@ To enable, add to default.ini::
 
 The following options are available, but not required:
 
-- ``ip_blacklist``: space-separated list of IPs on permanent blacklist.
-- ``ip_whitelist``: space-separated list of IPs to always allow.
+- ``ip_blacklist``: space or comma-separated list of IPs on permanent
+  blacklist.
+- ``ip_whitelist``: space or comma-separated list of IPs to always allow.
 - ``max_attempted_logins``: max no. of logins allowed for given time window
 - ``max_attempted_logins_window``: the length (in seconds) of the time window
   for which logins will be tracked (sliding scale).
@@ -21,6 +22,7 @@ The following options are available, but not required:
 # std imports
 import logging
 import time
+import re
 
 # globals
 BANNED_IP_LIST, ATTEMPTED_LOGINS = dict(), dict()
@@ -46,13 +48,12 @@ def get_fail2ban_function():
         return lambda ip: True
 
     # configuration
-    ip_blacklist = get_ini(section='fail2ban',
-                           key='ip_blacklist',
-                           split=True)
+    def _ip_list(key):
+        value = get_ini(section='fail2ban', key=key) or ''
+        return set(ip for ip in re.split(r'[\s,]+', value) if ip)
 
-    ip_whitelist = get_ini(section='fail2ban',
-                           key='ip_whitelist',
-                           split=True)
+    ip_blacklist = _ip_list('ip_blacklist')
+    ip_whitelist = _ip_list('ip_whitelist')
 
     max_attempted_logins = get_ini(
         section='fail2ban',
@@ -87,6 +88,10 @@ def get_fail2ban_function():
         global BANNED_IP_LIST, ATTEMPTED_LOGINS
 
         now = int(time.time())
+
+        # whitelisted IPs are always allowed
+        if ip in ip_whitelist:
+            return True
 
         # check to see if IP is blacklisted
         if ip in ip_blacklist:
@@ -123,8 +128,8 @@ def get_fail2ban_function():
                 # max # of attempts reached
                 del ATTEMPTED_LOGINS[ip]
                 BANNED_IP_LIST[ip] = now + initial_ban_length
-                log.warn('Exceeded maximum attempts; banning {ip}'
-                         .format(ip=ip))
+                log.warning('Exceeded maximum attempts; banning {ip}'
+                            .format(ip=ip))
                 return False
             else:
                 # extend window
@@ -135,7 +140,7 @@ def get_fail2ban_function():
                 log.debug('Window extended')
 
         # log attempted login
-        elif ip not in ip_whitelist:
+        else:
             log.debug('First attempted login for this window')
             ATTEMPTED_LOGINS[ip] = {
                 'attempts': 1,

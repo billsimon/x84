@@ -45,8 +45,7 @@ from common import (
 )
 
 # 3rd-party
-import dateutil
-
+import dateutil.tz
 TIME_FMT = '%A %b-%d, %Y at %r UTC'
 
 #: banner art displayed in main()
@@ -68,7 +67,7 @@ syncterm_font = get_ini(
 #: faster on slower systems (such as raspberry pi).
 colored_menu_items = get_ini(
     section='msgarea', key='colored_menu_items', getter='getboolean'
-) or True
+) if get_ini(section='msgarea', key='colored_menu_items') else True
 
 #: color used for description text
 color_text = get_ini(
@@ -325,8 +324,9 @@ def prompt_subscription(session, term, yloc, subscription, colors):
         # Prompt for and evaluate the given input, splitting by comma,
         # removing any empty items, and defaulting to ['*'] on escape.
         inp = editor.read() or u''
-        subscription = filter(None, set(map(unicode.strip, inp.split(',')))
-                              ) or set([u'*'])
+        subscription = sorted(set(
+            tag.strip() for tag in inp.split(',') if tag.strip()
+        )) or [u'*']
 
         # Then, reduce to only validate tag patterns, tracking those
         # that do not match any known tags, and display a warning and
@@ -365,7 +365,7 @@ def allow_tag(session, idx):
     if not moderated and 'sysop' in session.user.groups:
         return True
 
-    elif moderated and (tag_moderators | session.user.groups):
+    elif moderated and (tag_moderators & session.user.groups):
         # tags are moderated, but user is one of the moderator groups
         return True
 
@@ -437,7 +437,7 @@ def display_message(session, term, msg_index, colors):
     txt_sentago = colors['highlight'](
         timeago((datetime.datetime.now() - msg.stime)
                 .total_seconds()).strip())
-    txt_to = color_handle(msg.recipient)
+    txt_to = color_handle(msg.recipient) if msg.recipient else u'All'
     txt_private = (colors['highlight'](' (private)')
                    if not 'public' in msg.tags else u'')
     txt_from = color_handle(msg.author)
@@ -488,7 +488,7 @@ def delete_message(msg):
     msg.tags = set()
     msg.save()
     with DBProxy('tags') as tag_db:
-        for key, values in tag_db.items()[:]:
+        for key, values in tag_db.items():
             if msg.idx in values:
                 newvalue = values - set([msg.idx])
                 if newvalue:
@@ -497,7 +497,7 @@ def delete_message(msg):
                     # no more messages by this tag, delete it
                     del tag_db[key]
     with DBProxy('privmsg') as priv_db:
-        for key, values in priv_db.items()[:]:
+        for key, values in priv_db.items():
             if msg.idx in values:
                 priv_db[key] = values - set([msg.idx])
     with DBProxy('msgbase') as msg_db:
@@ -703,7 +703,7 @@ def main(quick=False):
                 session, subscription)
             if nxt_msgs['new'] - messages['new']:
                 # beep and re-display when a new message has arrived.
-                echo(u'\b')
+                echo(u'\a')
                 messages, messages_bytags = nxt_msgs, nxt_bytags
                 dirty = True
                 continue
@@ -919,8 +919,8 @@ def prompt_tags(session, term, msg, colors, public=True):
             term.inkey(1)
             return False
 
-        msg.tags = set(filter(None, set(map(unicode.strip, inp.split(',')))))
-        if moderated and not (tag_moderators | session.user.groups):
+        msg.tags = set(tag.strip() for tag in inp.split(',') if tag.strip())
+        if moderated and not (tag_moderators & session.user.groups):
             cannot_tag = [_tag for _tag in msg.tags if _tag not in all_tags]
             if cannot_tag:
                 echo(u''.join((u'\r\n', term.move_x(xpos),
@@ -929,7 +929,7 @@ def prompt_tags(session, term, msg, colors, public=True):
                                u': not allowed; this system is moderated.')))
                 term.inkey(2)
                 echo(term.move_up)
-                map(msg.tags.remove, cannot_tag)
+                msg.tags -= set(cannot_tag)
                 continue
 
         return True

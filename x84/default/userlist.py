@@ -42,7 +42,7 @@ location_max_length = get_ini(
 
 
 def iter_userlist():
-    handles = sorted(list_users(), key=unicode.lower)
+    handles = sorted(list_users(), key=str.lower)
     timenow = time.time()
     user_record = collections.namedtuple('userlist', [
         'handle', 'location', 'timeago'])

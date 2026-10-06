@@ -44,7 +44,7 @@ def view_leaf_msgnet(server_tag=None, board_id=None):
 
 
 def add_leaf_msgnet():
-    import cryptography.fernet
+    import secrets
     server_tags = get_ini(section='msg', key='server_tags', split=True)
     if not server_tags:
         raise ValueError(MSG_NO_SERVER_TAGS)
@@ -55,21 +55,21 @@ def add_leaf_msgnet():
         while True:
             echo('chose a server tag: ')
             idx = 0
-            for idx, tag in server_tags:
+            for idx, tag in enumerate(server_tags):
                 echo(u'\r\n{0}. {1}'.format(idx, tag))
             echo(u'\r\n: ')
-            inp = LineEditor(width=len(str(idx)).read())
+            inp = LineEditor(width=len(str(idx))).read()
             if inp is None:
                 return
             try:
                 server_tag = server_tags[int(inp)]
                 break
-            except ValueError:
+            except (ValueError, IndexError):
                 pass
 
     with DBProxy('{0}keys'.format(server_tag)) as key_db:
-        board_id = max(map(int, key_db.keys()) or [-1]) + 1
-        client_key = cryptography.fernet.Fernet.generate_key()
+        board_id = max([int(key) for key in key_db.keys()] or [-1]) + 1
+        client_key = secrets.token_urlsafe(32)
         key_db[board_id] = client_key
     echo(u'\r\n')
     echo(u'-' * 40)

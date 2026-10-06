@@ -1,7 +1,7 @@
 """ File browser/manager for x/84. """
 # std imports
-from __future__ import division
 import zipfile
+import shutil
 import os
 
 # local
@@ -71,6 +71,18 @@ class FileBrowser(object):
 browser = FileBrowser()  # pylint:disable=C0103
 
 
+def decode_lines(lines, decoder):
+    """
+    Return list of text lines of a description.
+
+    Descriptions of ASCII collies are stored as raw bytes, and decoded for
+    display by ``decoder``; all others are stored as text.
+    """
+    return [line.decode(decoder, errors='replace')
+            if isinstance(line, bytes) else line
+            for line in lines]
+
+
 def diz_from_dms(binary, filename):
     """
     Amiga diskmasher format. Depends on the external binary 'xdms'.
@@ -131,9 +143,10 @@ def diz_from_zip(filename, method=zipfile.ZIP_STORED):
 
 def get_diz_from_colly(filepath):
     """ Get FILE_ID.DIZ from within an ASCII collection. """
-    colly = open(filepath, 'r').read()
-    colly_diz_begin = '@BEGIN_FILE_ID.DIZ'
-    colly_diz_end = '@END_FILE_ID.DIZ'
+    with open(filepath, 'rb') as fin:
+        colly = fin.read()
+    colly_diz_begin = b'@BEGIN_FILE_ID.DIZ'
+    colly_diz_end = b'@END_FILE_ID.DIZ'
     pos = colly.find(colly_diz_begin)
     if pos > 0:
         colly = colly[pos + len(colly_diz_begin):]
@@ -175,8 +188,7 @@ def edit_description(filepath, db_desc):
     from x84.bbs import gosub
     new_desc = None
     if filepath in db_desc:
-        new_desc = u'\r\n'.join([line.decode('cp437_art')
-                                 for line in db_desc[filepath]])
+        new_desc = u'\r\n'.join(decode_lines(db_desc[filepath], 'cp437_art'))
     new_desc = gosub('editor', continue_draft=new_desc)
     if not new_desc:
         return
@@ -191,15 +203,16 @@ def download_files(term, session, protocol='xmodem1k'):
     echo(term.clear)
     flagged = browser.flagged_files.copy()
     for fname in flagged:
-        _fname = fname[fname.rfind(os.path.sep) + 1:].decode('utf8')
+        _fname = os.path.basename(fname)
         echo(term.bold_green(
             u'Start your {protocol} receiving program '
             u'to begin transferring {_fname}...\r\n'
             .format(protocol=protocol, _fname=_fname)))
         echo(u'Press ^X twice to cancel\r\n')
 
-        fin = open(fname, 'rb')
-        if not send_modem(fin, protocol):
+        with open(fname, 'rb') as fin:
+            sent = send_modem(fin, protocol)
+        if not sent:
             echo(term.bold_red(u'Transfer failed!\r\n'))
         else:
             browser.flagged_files.remove(fname)
@@ -230,11 +243,14 @@ def upload_files(term, protocol='xmodem1k'):
 
             upload_filename = os.path.join(UPLOADS_DIR, inp)
             try:
-                upload = open(upload_filename, 'wb')
-            except IOError as err:
-                echo(term.bold_red('u\r\nIOError: {err}\r\n'.format(err=err)))
+                # exclusive creation: never replace an existing upload.
+                upload = open(upload_filename, 'xb')
+            except OSError as err:
+                echo(term.bold_red(u'\r\nError: {err}\r\n'.format(err=err)))
             else:
-                if not recv_modem(upload, protocol):
+                with upload:
+                    received = recv_modem(upload, protocol)
+                if not received:
                     echo(term.bold_red(u'Upload failed!\r\n'))
                     os.unlink(upload_filename)
                 else:
@@ -274,14 +290,14 @@ def describe_file(term, diz, directory, filename, isdir=None):
         # describe directory
         description = u'{txt_Directory}: {filename}'.format(
             txt_Directory=term.bold(u'Directory'),
-            filename=filename.decode('utf8'))
+            filename=filename)
 
     else:
         # describe file
         _size = filesize(os.path.join(directory, filename))
-        _filename = (filename[len(ROOT):].decode('utf8')
+        _filename = (filename[len(ROOT):]
                      if directory == os.path.join(ROOT, FLAGGED_DIRNAME)
-                     else filename.decode('utf8'))
+                     else filename)
         description = (u'{txt_Filename}: {filename}  {txt_Size}: {size}'
                        .format(txt_Filename=term.bold(u'Filename'),
                                filename=_filename,
@@ -316,7 +332,7 @@ def mark_flagged(directory, files):
         prefix = u' '
         if os.path.join(directory, fname) in browser.flagged_files:
             prefix = FLAGGED_CHAR
-        txt_fname = fname.strip().decode('utf8')
+        txt_fname = fname.strip()
         item = (fname, (u'{prefix}{txt_fname}'
                         .format(prefix=prefix, txt_fname=txt_fname)))
         files_list.append(item)
@@ -327,10 +343,10 @@ def flagged_listdir():
     """ Build listing for flagged files pseudo-folder. """
     files = [u'{flagged_char}{txt_fname}'.format(
         flagged_char=FLAGGED_CHAR,
-        txt_fname=fname[fname.rfind(os.path.sep) + 1:].decode('utf8'))
+        txt_fname=os.path.basename(fname))
         for fname in browser.flagged_files]
 
-    zipped_files = zip(browser.flagged_files, files)
+    zipped_files = list(zip(browser.flagged_files, files))
     sorted_files = sorted(zipped_files, key=lambda x: x[1].lower())
     sorted_files.insert(0, (u'..{0}'.format(os.path.sep),
                             u' ..{0}'.format(os.path.sep)))
@@ -500,11 +516,7 @@ def browse_dir(session, db_desc, term, lightbar, directory, sub=False):
                 decoder = 'cp437_art'
                 if session.encoding == 'utf8':
                     decoder = COLLY_DECODING
-                try:
-                    diz = [line.decode(decoder, errors='replace')
-                           for line in diz]
-                except UnicodeEncodeError:
-                    diz = [u'Invalid characters in FILE_ID.DIZ']
+                diz = decode_lines(diz, decoder)
 
         elif ext in browser.diz_extractors:
             # is (supported) archive
@@ -512,18 +524,14 @@ def browse_dir(session, db_desc, term, lightbar, directory, sub=False):
 
         elif ext in COLLY_EXTENSIONS:
             # is ASCII colly, pull diz from between markers if available.
-            diz = get_diz_from_colly(filepath=filepath) or diz
+            diz = get_diz_from_colly(filepath=filepath) or [u'No description']
             # save diz in raw format, but display decoded
             save_diz = False
             db_desc[relativename] = diz
             decoder = 'cp437_art'
             if session.encoding == 'utf8':
                 decoder = COLLY_DECODING
-            try:
-                diz = [line.decode(decoder, errors='replace') for line in diz]
-            except UnicodeEncodeError:
-                diz = [u'Invalid characters in FILE_ID.DIZ']
-                db_desc[relativename] = diz
+            diz = decode_lines(diz, decoder)
 
         elif is_flagged_dir(filename):
             # is pseudo-folder for flagged files
@@ -540,7 +548,7 @@ def browse_dir(session, db_desc, term, lightbar, directory, sub=False):
             save_diz = False
             diz = [u'No description']
 
-        if not UPLOADS_DIR.find(directory) and save_diz:
+        if save_diz and not directory.startswith(UPLOADS_DIR):
             # write description to diz db when save_diz is True
             with db_desc:
                 db_desc[relativename] = diz
@@ -554,7 +562,6 @@ def browse_dir(session, db_desc, term, lightbar, directory, sub=False):
 
 def main():
     """ File browser launch point. """
-    import subprocess
     import functools
     session, term = getsession(), getterminal()
     session.activity = u'Browsing files'
@@ -568,16 +575,14 @@ def main():
     browser.diz_extractors['.zip'] = diz_from_zip
 
     # detect LHA and DMS support
-    output, _ = subprocess.Popen(('which', 'lha'), stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE).communicate()
-    if output:
+    binary = shutil.which('lha')
+    if binary:
         browser.diz_extractors['.lha'] = functools.partial(diz_from_lha,
-                                                          output.rstrip())
-    output, _ = subprocess.Popen(('which', 'xdms'), stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE).communicate()
-    if output:
+                                                          binary)
+    binary = shutil.which('xdms')
+    if binary:
         browser.diz_extractors['.dms'] = functools.partial(diz_from_dms,
-                                                          output.rstrip())
+                                                          binary)
 
     # load flagged files
     browser.flagged_files = session.user.get('flaggedfiles', set())

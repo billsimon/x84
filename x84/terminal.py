@@ -1,29 +1,38 @@
 """ Terminal handler for x/84 """
 import contextlib
+import threading
 import logging
 import codecs
 import sys
 from blessed import Terminal as BlessedTerminal
+from blessed.terminal import WINSZ
 
 TERMINALS = dict()
 
 
 class Terminal(BlessedTerminal):
 
-    """ A thin wrapper over :class:`blessed.Terminal`. """
+    """
+    A thin wrapper over :class:`blessed.Terminal`.
+
+    The terminal of a session is "virtual": it has no file descriptors.
+    Output is written to an :class:`~x84.bbs.ipc.IPCStream`, and keyboard
+    input arrives as ``'input'`` events of the session.  The keyboard
+    methods of blessed (:meth:`getch`, :meth:`kbhit`, and the block-reading
+    :meth:`_read_available`) are overridden to read session events instead
+    of a file descriptor.
+    """
 
     _session = None
 
-    def __init__(self, kind, stream, rows, columns):
+    def __init__(self, kind, stream, rows, columns, kind_fallback='ansi'):
         """ Class initializer. """
         self._rows = rows
         self._columns = columns
-        BlessedTerminal.__init__(self, kind, stream)
-        # *PATCH* against 'is None' check in method Terminal.inkey()
-        # that raises RuntimeError to "prevent indefinite blocking
-        # timeout without a keyboard attached" -- which is often our
-        # intention.
-        self._keyboard_fd = 'defunc'
+        BlessedTerminal.__init__(self, kind, stream, force_styling=True,
+                                 kind_fallback=kind_fallback)
+        # until the session calls set_keyboard_decoder(), decode as utf-8.
+        self.set_keyboard_decoder('utf8')
         if sys.platform.lower().startswith('win32'):
             self._normal = '\x1b[m'
 
@@ -35,28 +44,30 @@ class Terminal(BlessedTerminal):
             self._session = getsession()
         return self._session
 
-    def inkey(self, timeout=None, esc_delay=0.35, *_):
+    def inkey(self, timeout=None, esc_delay=0.35, *_, **__):
         # pylint: disable=C0111
         #         Missing docstring
         try:
-            return BlessedTerminal.inkey(self, timeout, esc_delay=0.35)
+            return BlessedTerminal.inkey(self, timeout, esc_delay=esc_delay)
         except UnicodeDecodeError as err:
+            from blessed.keyboard import Keystroke
             log = logging.getLogger(__name__)
-            log.warn('UnicodeDecodeError: {0}'.format(err))
-            return u'?'
+            log.warning('UnicodeDecodeError: {0}'.format(err))
+            return Keystroke(u'?')
     inkey.__doc__ = BlessedTerminal.inkey.__doc__
 
     def set_keyboard_decoder(self, encoding):
         """ Set or change incremental decoder for keyboard input. """
         log = logging.getLogger(__name__)
         try:
-            self._keyboard_decoder = codecs.getincrementaldecoder(encoding)()
+            self._keyboard_decoder = codecs.getincrementaldecoder(encoding)(
+                errors='replace')
             self._encoding = encoding
             log.debug('keyboard encoding is {!r}'.format(encoding))
-        except Exception as err:
+        except LookupError as err:
             log.exception(err)
 
-    def kbhit(self, timeout=0, *_):
+    def kbhit(self, timeout=0, *_, **__):
         # pylint: disable=C0111
         #         Missing docstring
         # pull a value off the input buffer if available,
@@ -71,19 +82,27 @@ class Terminal(BlessedTerminal):
         return False
     kbhit.__doc__ = BlessedTerminal.kbhit.__doc__
 
-    def getch(self):
+    def getch(self, *_, **__):
         # pylint: disable=C0111
         #         Missing docstring
         val = self.session.read_event('input')
         return self._keyboard_decoder.decode(val, final=False)
     getch.__doc__ = BlessedTerminal.getch.__doc__
 
+    def _read_available(self):
+        """ Read and decode all keyboard input immediately available. """
+        ucs = u''
+        while True:
+            val = self.session.read_event('input', -1)
+            if val is None:
+                return ucs
+            ucs += self._keyboard_decoder.decode(val, final=False)
+
     def _height_and_width(self):
         # pylint: disable=C0111
         #         Missing docstring
-        from blessed.terminal import WINSZ
         return WINSZ(ws_row=self._rows, ws_col=self._columns,
-                     ws_xpixel=None, ws_ypixel=None)
+                     ws_xpixel=0, ws_ypixel=0)
     _height_and_width.__doc__ = BlessedTerminal._height_and_width.__doc__
 
     @contextlib.contextmanager
@@ -148,9 +167,19 @@ def determine_encoding(env):
     fallback_encoding = {
         'ansi': 'cp437',
         'ansi-bbs': 'cp437',
+        'syncterm': 'cp437',
     }.get(env['TERM'], default_encoding)
 
     return env.get('encoding', fallback_encoding)
+
+
+#: environment variables of the server process, removed before initializing
+#: the terminal of a session, see :func:`init_term`.
+SERVER_TERMINAL_VARIABLES = (
+    'TERM', 'NO_COLOR', 'FORCE_COLOR', 'CLICOLOR_FORCE', 'COLORTERM',
+    'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ANSICON', 'ConEmuANSI',
+    'WT_SESSION', 'LINES', 'COLUMNS',
+)
 
 
 def init_term(writer, env):
@@ -164,29 +193,67 @@ def init_term(writer, env):
 
     A blessed-abstracted curses terminal is returned.
     """
+    import os
     from x84.bbs.ipc import IPCStream
     from x84.bbs import get_ini
     log = logging.getLogger(__name__)
     env['TERM'] = translate_ttype(env.get('TERM', 'unknown'))
     env['encoding'] = determine_encoding(env)
+    termcap_unknown = get_ini('system', 'termcap-unknown') or 'ansi'
+    if termcap_unknown == 'no':
+        termcap_unknown = 'ansi'
+
+    # blessed consults environment variables that describe the terminal of
+    # the server process, such as TERM (preferred over our fallback when the
+    # given TERM is not found), and NO_COLOR, which would disable colors for
+    # all sessions.  These are not meaningful for a remote client.
+    for name in SERVER_TERMINAL_VARIABLES:
+        os.environ.pop(name, None)
+    if env.get('COLORTERM'):
+        # but of the client's own environment, as sent by telnet or ssh.
+        os.environ['COLORTERM'] = env['COLORTERM']
     term = Terminal(kind=env['TERM'],
                     stream=IPCStream(writer=writer),
                     rows=int(env.get('LINES', '24')),
-                    columns=int(env.get('COLUMNS', '80')))
+                    columns=int(env.get('COLUMNS', '80')),
+                    kind_fallback=termcap_unknown)
 
-    if term.kind is None:
-        # the given environment's TERM failed curses initialization
-        # because, more than likely, the TERM type was not found.
-        termcap_unknown = get_ini('system', 'termcap-unknown') or 'ansi'
+    if term.kind != env['TERM']:
+        # the given environment's TERM failed terminfo lookup, because,
+        # more than likely, the TERM type was not found.
         log.debug('terminal-type {0} failed, using {1} instead.'
-                  .format(env['TERM'], termcap_unknown))
-        term = Terminal(kind=termcap_unknown,
-                        stream=IPCStream(writer=writer),
-                        rows=int(env.get('LINES', '24')),
-                        columns=int(env.get('COLUMNS', '80')))
+                  .format(env['TERM'], term.kind))
 
     log.info("terminal type is {0!r}".format(term.kind))
     return term
+
+
+class LockedConnection(object):
+
+    """
+    Thread-safe writer of a :func:`multiprocessing.Pipe` connection.
+
+    The engine's main loop and its database handler threads may send to the
+    same session concurrently; a large message is written by more than one
+    system call, which must not be interleaved with that of another.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        self._lock = threading.Lock()
+
+    def send(self, obj):
+        """ Send ``obj`` to connection. """
+        with self._lock:
+            self._conn.send(obj)
+
+    def close(self):
+        """ Close connection. """
+        self._conn.close()
+
+    def fileno(self):
+        """ File descriptor of connection. """
+        return self._conn.fileno()
 
 
 class TerminalProcess(object):
@@ -207,13 +274,15 @@ class TerminalProcess(object):
     :func:`get_terminals`.
     """
 
-    def __init__(self, client, sid, master_pipes):
+    def __init__(self, client, sid, master_pipes, process=None):
         """ Class constructor. """
         from x84.bbs import get_ini
         self.client = client
         self.sid = sid
-        (self.master_write, self.master_read) = master_pipes
-        self.timeout = get_ini('system', 'timeout') or 0
+        self.process = process
+        (master_write, self.master_read) = master_pipes
+        self.master_write = LockedConnection(master_write)
+        self.timeout = get_ini('system', 'timeout', getter='getint') or 0
 
 
 def flush_queue(queue):
@@ -229,7 +298,7 @@ def flush_queue(queue):
             event, data = queue.recv()
             if event == 'logger':
                 log.handle(data)
-    except (EOFError, IOError) as err:
+    except (EOFError, OSError) as err:
         log.debug(err)
 
 
@@ -246,18 +315,32 @@ def unregister_tty(tty):
         flush_queue(tty.master_read)
         tty.master_read.close()
         tty.master_write.close()
-    except (EOFError, IOError) as err:
+    except (EOFError, OSError) as err:
         log = logging.getLogger(__name__)
         log.exception(err)
+    if tty.process is not None:
+        # reap the sub-process, if it has already exited, so that it does
+        # not linger as a zombie; otherwise it is reaped by multiprocessing
+        # the next time a process is started.
+        tty.process.join(timeout=0)
     if tty.client.active:
         # signal tcp socket to close
         tty.client.deactivate()
-    del TERMINALS[tty.sid]
+    TERMINALS.pop(tty.sid, None)
+
+    # release any bbs-wide locks held by the session, such as its node
+    # number: it may have been killed before it could release them.
+    from x84.db import LOCKS
+    released = LOCKS.release_all(tty.sid)
+    if released:
+        logging.getLogger(__name__).debug(
+            '[{tty.sid}] released locks: {released}'
+            .format(tty=tty, released=', '.join(released)))
 
 
 def get_terminals():
     """ Returns a list of all terminals as tuples (session-id, ttys). """
-    return TERMINALS.items()
+    return list(TERMINALS.items())
 
 
 def find_tty(client):
@@ -278,7 +361,7 @@ def kill_session(client, reason='killed'):
     if tty is not None:
         try:
             tty.master_write.send(('exception', Disconnected(reason),))
-        except (EOFError, IOError):
+        except (EOFError, OSError):
             pass
         log.info('[{tty.sid}] goodbye: {reason}'
                  .format(tty=tty, reason=reason))
@@ -306,11 +389,15 @@ def start_process(sid, env, CFG, child_pipes, kind, addrport,
     # pylint: disable=R0913,R0914
     #         Too many arguments (8/5)
     #         Too many local variables (16/15)
+    import signal
     import x84.bbs.ini
     from x84.bbs.ipc import make_root_logger
     from x84.bbs.session import Session
     from x84.bbs.exception import Disconnected
 
+    # sessions are ended by the engine, which receives ^C (SIGINT) from the
+    # controlling terminal of its process group, as do we: ignore it.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     # CFG must be pickled and sent to child process; on windows systems,
     # fork() does not duplicate that it has been initialized, and requires
     # sending to child process
@@ -347,28 +434,59 @@ def start_process(sid, env, CFG, child_pipes, kind, addrport,
         # signal exit to engine
         try:
             writer.send(('exit', None))
-        except IOError as err:
+        except (BrokenPipeError, ConnectionResetError):
+            # the engine has already closed our pipe (client disconnected)
+            pass
+        except OSError as err:
             # ignore [Errno 232] The pipe is being closed,
             # only occurs on win32 platform after early exit
             if err.errno != 232:
                 raise
 
 
-def spawn_client_session(client, matrix_kwargs=None):
-    """ Spawn sub-process for connecting client.
-
-    Optional
+def get_mp_context():
     """
-    from multiprocessing import Process, Pipe
+    Return :mod:`multiprocessing` context used for session sub-processes.
+
+    Sessions are never started by ``fork``: the engine is multi-threaded
+    (on-connect negotiation, database, and web server threads), and forking
+    a multi-threaded process may deadlock the child on locks held by other
+    threads (such as those of the logging module).  ``forkserver`` is
+    preferred, as it forks from a clean, single-threaded server process with
+    x/84 already imported.  Windows supports only ``spawn``.
+    """
+    import multiprocessing
+    global _MP_CONTEXT
+    if _MP_CONTEXT is None:
+        if 'forkserver' in multiprocessing.get_all_start_methods():
+            _MP_CONTEXT = multiprocessing.get_context('forkserver')
+            _MP_CONTEXT.set_forkserver_preload(
+                ['x84.bbs', 'x84.bbs.session', 'x84.terminal'])
+        else:
+            _MP_CONTEXT = multiprocessing.get_context('spawn')
+    return _MP_CONTEXT
+
+
+_MP_CONTEXT = None
+
+
+def spawn_client_session(client, matrix_kwargs=None):
+    """
+    Spawn sub-process for connecting client.
+
+    :param client: connected and negotiated client instance.
+    :param dict matrix_kwargs: optional keyword arguments for matrix script.
+    """
     import x84.bbs.ini
 
-    child_read, master_write = Pipe(duplex=False)
-    master_read, child_write = Pipe(duplex=False)
+    context = get_mp_context()
+    child_read, master_write = context.Pipe(duplex=False)
+    master_read, child_write = context.Pipe(duplex=False)
     session_id = '{client.kind}-{client.addrport}'.format(client=client)
 
     # start sub-process, which will initialize the terminal and
     # begins the 'session' for the connecting client.
-    Process(target=start_process, kwargs={
+    process = context.Process(target=start_process, kwargs={
         'sid': session_id,
         'env': client.env,
         'CFG': x84.bbs.ini.CFG,
@@ -376,12 +494,19 @@ def spawn_client_session(client, matrix_kwargs=None):
         'kind': client.kind,
         'addrport': client.addrport,
         'matrix_kwargs': matrix_kwargs,
-    }).start()
+    }, daemon=True)
+    process.start()
+
+    # the child-side pipes are now owned by the sub-process; close our
+    # copies so that EOF is detected when the sub-process exits.
+    child_read.close()
+    child_write.close()
 
     # and register its tty and master-side pipes for polling by x84.engine
     register_tty(TerminalProcess(client=client,
                                  sid=session_id,
-                                 master_pipes=(master_write, master_read)))
+                                 master_pipes=(master_write, master_read),
+                                 process=process))
 
 
 def on_naws(client):

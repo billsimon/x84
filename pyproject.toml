@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x84"
+dynamic = ["version"]
+description = "Framework for Telnet and SSH BBS or MUD server development with example default bbs board"
+readme = "docs/intro.rst"
+license = "ISC"
+license-files = ["LICENSE"]
+authors = [{ name = "Jeff Quast", email = "contact@jeffquast.com" }]
+keywords = ["telnet", "ssh", "terminal", "server", "ansi", "bbs", "mud",
+            "curses", "utf8", "cp437"]
+requires-python = ">=3.11"
+dependencies = [
+    "bcrypt>=4.0",
+    "blessed>=1.40,<2",
+    "feedparser>=6.0",
+    "html2text>=2020.1.16",
+    "irc>=20.0",
+    "paramiko>=3.2",
+    "python-dateutil>=2.8",
+    "requests>=2.31",
+    "sauce>=1.4",
+    "sqlitedict>=2.1",
+    "xmodem>=0.4.7",
+]
+classifiers = [
+    "Environment :: Console :: Curses",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: BSD",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Artistic Software",
+    "Topic :: Communications :: BBS",
+    "Topic :: Software Development :: User Interfaces",
+    "Topic :: Terminals :: Telnet",
+    "Topic :: Terminals",
+]
+
+[project.optional-dependencies]
+# https web server, for web modules and hosting message networks.
+web = [
+    "cheroot>=10.0",
+    "web.py>=0.62",
+]
+test = [
+    "pytest>=8",
+    "cheroot>=10.0",
+    "web.py>=0.62",
+]
+
+[project.urls]
+Homepage = "https://github.com/jquast/x84"
+Documentation = "https://x84.readthedocs.io"
+
+[project.scripts]
+x84 = "x84.engine:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "x84.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["x84*"]
+
+[tool.setuptools.package-data]
+"x84.default" = ["*.ans", "*.txt"]
+"x84.default.art" = ["*", "*/*", "*/*/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = [
+    # blessed warns of capabilities unknown to the "ansi" terminal type.
+    "ignore::UserWarning:blessed",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 79
+extend-exclude = ["x84/encodings"]
+
+[tool.ruff.lint]
+# pyflakes, and syntax errors: those that indicate actual mistakes.
+select = ["F", "E9"]

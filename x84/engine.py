@@ -22,15 +22,16 @@ __license__ = 'ISC'
 
 # std
 import logging
+import pickle
 import select
+import signal
 import socket
-import time
 import sys
 
 # local
-__import__('encodings')  # provides alternate encodings
+import x84.encodings  # noqa  provides alternate encodings
 from x84 import cmdline
-from x84.db import DBHandler
+from x84.db import DBHandler, LOCKS, thread_holder_alive, close_databases
 from x84.terminal import get_terminals, kill_session, find_tty
 from x84.fail2ban import get_fail2ban_function
 
@@ -51,22 +52,14 @@ def main():
     from x84.bbs import get_ini
     from x84.bbs.ini import CFG
 
-    if sys.maxunicode == 65535:
-        # apple is the only known bastardized variant that does this;
-        # presumably for memory/speed savings (UCS-2 strings are faster
-        # than UCS-4).  Python 3 dynamically allocates string types by
-        # their widest content, so such things aren't necessary, there.
-        import warnings
-        warnings.warn('This python is built without wide unicode support. '
-                      'some internationalized languages will not be possible.')
+    # exit gracefully on SIGTERM (such as by systemd or docker), as for ^C.
+    signal.signal(signal.SIGTERM, _sigterm_handler)
 
     # retrieve list of managed servers
     servers = get_servers(CFG)
 
     # begin unmanaged servers
-    if (CFG.has_section('web') and
-            (not CFG.has_option('web', 'enabled')
-             or CFG.getboolean('web', 'enabled'))):
+    if server_enabled(CFG, 'web'):
         # start https server for one or more web modules.
         from x84 import webserve
         webserve.main()
@@ -81,32 +74,55 @@ def main():
         # begin main event loop
         _loop(servers)
     except KeyboardInterrupt:
-        # exit on ^C, killing any client sessions.
-        for server in servers:
-            for thread in server.threads[:]:
-                if not thread.stopped:
-                    thread.stopped = True
-                server.threads.remove(thread)
-            for key, client in server.clients.items()[:]:
-                kill_session(client, 'server shutdown')
-                del server.clients[key]
+        # exit on ^C or SIGTERM, killing any client sessions.
+        log = logging.getLogger('x84.engine')
+        log.info('server shutdown')
+        shutdown(servers)
     return 0
+
+
+def _sigterm_handler(signum, frame):
+    """ Signal handler for SIGTERM, raises KeyboardInterrupt. """
+    # pylint: disable=W0613
+    #         Unused argument
+    raise KeyboardInterrupt('SIGTERM')
+
+
+def shutdown(servers):
+    """ Kill all client sessions, close server sockets and databases. """
+    for server in servers:
+        for thread in server.threads[:]:
+            thread.stopped = True
+            server.threads.remove(thread)
+        for key, client in list(server.clients.items()):
+            kill_session(client, 'server shutdown')
+            del server.clients[key]
+        server.server_socket.close()
+    close_databases()
+
+
+def server_enabled(CFG, section):
+    """
+    Whether server of configuration ``section`` is enabled.
+
+    A server is enabled when its section exists, and its ``enabled`` option
+    is either missing or true.
+    """
+    return CFG.has_section(section) and (
+        not CFG.has_option(section, 'enabled')
+        or CFG.getboolean(section, 'enabled'))
 
 
 def get_servers(CFG):
     """ Instantiate and return enabled servers by configuration ``CFG``. """
     servers = []
 
-    if (CFG.has_section('telnet') and
-            (not CFG.has_option('telnet', 'enabled')
-             or CFG.getboolean('telnet', 'enabled'))):
+    if server_enabled(CFG, 'telnet'):
         # start telnet server instance
         from x84.telnet import TelnetServer
         servers.append(TelnetServer(config=CFG))
 
-    if (CFG.has_section('ssh') and
-            not CFG.has_option('ssh', 'enabled')
-            or CFG.getboolean('ssh', 'enabled')):
+    if server_enabled(CFG, 'ssh'):
         # start ssh server instance
         #
         # may raise an ImportError for systems where pyOpenSSL and etc. could
@@ -117,9 +133,7 @@ def get_servers(CFG):
         from x84.ssh import SshServer
         servers.append(SshServer(config=CFG))
 
-    if (CFG.has_section('rlogin') and
-            (not CFG.has_option('rlogin', 'enabled')
-             or CFG.getboolean('rlogin', 'enabled'))):
+    if server_enabled(CFG, 'rlogin'):
         # start rlogin server instance
         from x84.rlogin import RLoginServer
         servers.append(RLoginServer(config=CFG))
@@ -162,10 +176,10 @@ def accept(log, server, check_ban):
         sock, address_pair = server.server_socket.accept()
 
         # busy signal
-        if server.client_count() > server.MAX_CONNECTIONS:
+        if server.client_count() >= server.MAX_CONNECTIONS:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
-            except socket.error:
+            except OSError:
                 pass
             sock.close()
             log.error('{addr}: refused, maximum connections reached.'
@@ -177,7 +191,7 @@ def accept(log, server, check_ban):
             log.debug('{addr}: refused, banned.'.format(addr=address_pair[0]))
             try:
                 sock.shutdown(socket.SHUT_RDWR)
-            except socket.error:
+            except OSError:
                 pass
             sock.close()
             return
@@ -195,8 +209,8 @@ def accept(log, server, check_ban):
         server.threads.append(thread)
         thread.start()
 
-    except socket.error as err:
-        log.error('accept error {0}:{1}'.format(*err))
+    except OSError as err:
+        log.error('accept error: {0}'.format(err))
 
 
 def get_session_output_fds(servers):
@@ -206,7 +220,11 @@ def get_session_output_fds(servers):
         for client in server.clients.values():
             tty = find_tty(client)
             if tty is not None:
-                session_fds.append(tty.master_read.fileno())
+                try:
+                    session_fds.append(tty.master_read.fileno())
+                except OSError:
+                    # pipe was closed
+                    pass
     return session_fds
 
 
@@ -260,7 +278,7 @@ def session_send(terminals):
         if tty.client.input_ready():
             try:
                 tty.master_write.send(('input', tty.client.get_input()))
-            except IOError:
+            except OSError:
                 # this may happen if a sub-process crashes, or more often,
                 # because the subprocess has logged off, but the user kept
                 # banging the keyboard before we have had the opportunity
@@ -273,84 +291,55 @@ def session_send(terminals):
 
 
 def handle_lock(locks, tty, event, data, tap_events, log):
-    """ handle locking event of ``(lock-key, (method, stale))``. """
+    """
+    Handle locking event of ``(lock-key, (method, stale))``.
+
+    :param x84.db.LockTable locks: bbs-wide lock table.
+    :param x84.terminal.TerminalProcess tty: requesting session.
+    :param str event: name of lock.
+    :param tuple data: ``(method, stale)``, where method is ``'acquire'`` or
+        ``'release'``, and stale is ``None`` or number of seconds after which
+        a lock held by another session may be taken.
+    """
     # pylint: disable=R0913
     #         Too many arguments (6/5)
     method, stale = data
     if method == 'acquire':
-        # this lock is already held,
-        if event in locks:
-            # check if lock held by an active session,
-            holder = locks[event][1]
-            for _sid, _ in get_terminals():
-                if _sid == holder and _sid != tty.sid:
-                    # acquire the lock from a now-deceased session.
-                    log.debug('[{tty.sid}] {event} not acquired, '
-                              'held by active session: {holder}'
-                              .format(tty=tty, event=event, holder=holder))
-                    break
-                elif _sid == holder and _sid == tty.sid:
-                    # acquire the lock from ourselves!  We'll allow it
-                    # (this is termed, "re-entrant locking").
-                    log.debug('{tty.sid}] {event} is re-acquired!'
-                              .format(tty=tty, event=event))
-            else:
-                # lock is held by a now-defunct session, re-acquired.
-                log.debug('[{tty.sid}] {event} re-acquiring stale lock, '
-                          'previously held by session no longer active: '
-                          '{holder}'
-                          .format(tty=tty, event=event, holder=holder))
-                del locks[event]
+        active_sids = set(_sid for _sid, _ in get_terminals())
 
-        # lock is not held, or release by previous block
-        if event not in locks:
-            # acknowledge its requirement,
-            locks[event] = (time.time(), tty.sid)
-            tty.master_write.send((event, True,))
-            if tap_events:
-                log.debug('[{tty.sid}] {event} granted lock.'
-                          .format(tty=tty, event=event))
+        def is_alive(holder):
+            """ Whether lock holder is an active session or thread. """
+            return holder in active_sids or thread_holder_alive(holder)
 
-        # lock cannot be acquired,
-        else:
-            holder = locks[event][1]
-            elapsed = time.time() - locks[event][0]
-            if (stale is not None and elapsed > stale):
-                # caller has decreed that this lock may be acquired even if
-                # it already held, if it has been held longer than length of
-                # time `stale`.  This is simply to prevent a global freeze
-                # when the programmer knows the holder may fail to release,
-                # though this is not currently used in the demonstration
-                # system.
-                locks[event] = (time.time(), tty.sid)
-                log.warn('[{tty.sid}] {event} re-acquiring stale lock, '
-                         'previously held active session {holder} after '
-                         '{elapsed}s elapsed (stale={stale})'
-                         .format(tty=tty, event=event, holder=holder,
-                                 elapsed=elapsed, stale=stale))
-                tty.master_write.send((event, True,))
-
-            # signal busy with matching event, data=False
-            else:
-                log.debug('[{tty.sid}] {event} lock rejected; already held '
-                          'by active session {holder} for {elapsed} seconds '
-                          '(stale={stale})'
-                          .format(tty=tty, event=event, holder=holder,
-                                  elapsed=elapsed, stale=stale))
-                tty.master_write.send((event, False,))
+        acquired, holder, elapsed = locks.acquire(
+            event, tty.sid, stale=stale, is_alive=is_alive)
+        if acquired and holder not in (None, tty.sid):
+            log.debug('[{tty.sid}] {event} re-acquiring stale lock, '
+                      'previously held by {holder} for {elapsed:0.2f}s '
+                      '(stale={stale})'
+                      .format(tty=tty, event=event, holder=holder,
+                              elapsed=elapsed, stale=stale))
+        elif acquired and tap_events:
+            log.debug('[{tty.sid}] {event} granted lock.'
+                      .format(tty=tty, event=event))
+        elif not acquired:
+            log.debug('[{tty.sid}] {event} lock rejected; already held '
+                      'by active session {holder} for {elapsed:0.2f} seconds '
+                      '(stale={stale})'
+                      .format(tty=tty, event=event, holder=holder,
+                              elapsed=elapsed, stale=stale))
+        tty.master_write.send((event, acquired,))
 
     elif method == 'release':
-        if event not in locks:
+        if not locks.release(event, tty.sid):
             log.error('[{tty.sid}] {event} lock failed to release, '
                       'not acquired.'.format(tty=tty, event=event))
-        else:
-            del locks[event]
-            if tap_events:
-                log.debug('[{tty.sid}] {event} released lock.'
-                          .format(tty=tty, event=event))
+        elif tap_events:
+            log.debug('[{tty.sid}] {event} released lock.'
+                      .format(tty=tty, event=event))
 
 
-def session_recv(locks, terminals, log, tap_events):
+def session_recv(terminals, log, tap_events):
     """
     Receive data waiting for terminal sessions.
 
@@ -360,12 +349,12 @@ def session_recv(locks, terminals, log, tap_events):
         while tty.master_read.poll():
             try:
                 event, data = tty.master_read.recv()
-            except (EOFError, IOError) as err:
+            except (EOFError, OSError) as err:
                 # sub-process unexpectedly closed
-                log.exception('master_read pipe: {0}'.format(err))
-                kill_session(tty.client, 'master_read pipe: {0}'.format(err))
+                log.debug('master_read pipe: {0!r}'.format(err))
+                kill_session(tty.client, 'master_read pipe: {0!r}'.format(err))
                 break
-            except TypeError as err:
+            except (TypeError, pickle.UnpicklingError) as err:
                 log.exception('unpickling error: {0}'.format(err))
                 break
 
@@ -390,7 +379,8 @@ def session_recv(locks, terminals, log, tap_events):
                     # data[0] is 'send-to' address.
                     if data[0] == _sid:
                         kill_session(
-                            tty.client, 'remote-disconnect by {0}'.format(sid))
+                            _tty.client,
+                            'remote-disconnect by {0}'.format(sid))
                         break
 
             # 'route': message passing directly from one session to another
@@ -400,7 +390,11 @@ def session_recv(locks, terminals, log, tap_events):
                 tgt_sid, send_event, send_val = data[0], data[1], data[2:]
                 for _sid, _tty in terminals:
                     if tgt_sid == _sid:
-                        _tty.master_write.send((send_event, send_val))
+                        try:
+                            _tty.master_write.send((send_event, send_val))
+                        except OSError:
+                            # target session has just disconnected.
+                            pass
                         break
 
             # 'global': message broadcasting to all sessions
@@ -409,7 +403,11 @@ def session_recv(locks, terminals, log, tap_events):
                     log.debug('broadcast: {data!r}'.format(data=data))
                 for _sid, _tty in terminals:
                     if sid != _sid:
-                        _tty.master_write.send((event, data,))
+                        try:
+                            _tty.master_write.send((event, data,))
+                        except OSError:
+                            # target session has just disconnected.
+                            pass
 
             # 'set-timeout': set user-preferred timeout
             elif event == 'set-timeout':
@@ -424,7 +422,7 @@ def session_recv(locks, terminals, log, tap_events):
 
             # 'lock': access fine-grained bbs-global locking
             elif event.startswith('lock'):
-                handle_lock(locks, tty, event, data, tap_events, log)
+                handle_lock(LOCKS, tty, event, data, tap_events, log)
 
             else:
                 log.error('[{tty.sid}] unhandled event, data: '
@@ -436,7 +434,7 @@ def _loop(servers):
     """ Main event loop. Never returns. """
     # pylint: disable=R0912,R0914,R0915
     #         Too many local variables (24/15)
-    from x84.bbs.ini import CFG
+    from x84.bbs.ini import get_ini
 
     SELECT_POLL = 0.02  # polling time is 20ms
 
@@ -451,16 +449,15 @@ def _loop(servers):
     if not len(servers):
         raise ValueError("No servers configured for event loop! (ssh, telnet)")
 
-    tap_events = CFG.getboolean('session', 'tap_events')
+    tap_events = get_ini('session', 'tap_events', getter='getboolean')
     check_ban = get_fail2ban_function()
-    locks = dict()
 
     while True:
         # shutdown, close & delete inactive clients,
         for server in servers:
             # bbs sessions that are no longer active on the socket
             # level -- send them a 'kill signal'
-            for key, client in server.clients.items()[:]:
+            for key, client in list(server.clients.items()):
                 if not client.is_active():
                     kill_session(client, 'socket shutdown')
                     del server.clients[key]
@@ -486,7 +483,7 @@ def _loop(servers):
         # additional `session_fds', a connecting client would block.
         try:
             ready_r, _, _ = select.select(check_r, [], [], SELECT_POLL)
-        except select.error as err:
+        except (OSError, ValueError) as err:
             # more than likely EBADF (9, 'Bad file descriptor'), it would seem
             # the socket we've just decided to poll has just gone bad.
             log.debug('continue after select.error: {0}'.format(err))
@@ -505,10 +502,10 @@ def _loop(servers):
         # receive new data from session terminals
         if WIN32 or set(session_fds) & set(ready_r):
             try:
-                session_recv(locks, terms, log, tap_events)
-            except IOError as err:
+                session_recv(terms, log, tap_events)
+            except OSError as err:
                 # if the ipc closes while we poll, warn and continue
-                log.warn(err)
+                log.warning(err)
 
         # send tcp data to clients
         client_send(terms, log)
@@ -518,4 +515,4 @@ def _loop(servers):
 
 
 if __name__ == '__main__':
-    exit(main())
+    sys.exit(main())

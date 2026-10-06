@@ -1,17 +1,10 @@
-.. image:: https://landscape.io/github/jquast/x84/master/landscape.svg
-    :target: https://landscape.io/github/jquast/x84/master
-    :alt: Code Health
-
 .. image:: https://img.shields.io/pypi/v/x84.svg
     :alt: Latest Version
-    :target: https://pypi.python.org/pypi/x84
+    :target: https://pypi.org/project/x84/
 
-.. image:: https://pypip.in/license/x84/badge.svg
+.. image:: https://img.shields.io/pypi/l/x84.svg
     :alt: License
-    :target: http://opensource.org/licenses/MIT
-
-.. image:: https://img.shields.io/pypi/dm/x84.svg
-    :alt: Downloads
+    :target: https://opensource.org/licenses/ISC
 
 Introduction
 ============
@@ -68,36 +61,34 @@ See clients_ for a list of compatible clients.
 Quickstart
 ----------
 
-Note that only Linux, BSD, or OSX is supported, due to the blessed_ dependency on curses.
+Linux, BSD, and macOS are supported.
 
-1. Install python_ 2.7 and pip_. More than likely this is possible through your
-   preferred distribution packaging system.
+1. Install python_ 3.11 or later.
 
-3. Install x/84::
+2. Install x/84 into a virtual environment::
 
-     pip install x84[with_crypto]
+     python3 -m venv ~/x84-env
+     ~/x84-env/bin/pip install x84
 
-   Or, if C compiler and libssl, etc. is not available, simply::
-   
-     pip install x84
+   To also run the https web server (for web modules, or hosting a message
+   network), install the ``web`` extra::
 
-   Please note however that without the ``[with_crypto]`` option, you
-   will not be able to run any of the web, ssh, and sftp servers, and
-   password hashing (and verification) will be significantly slower.
+     ~/x84-env/bin/pip install 'x84[web]'
 
-   If you receive an error about ``setuptools_ext`` not being found, you
-   may need to upgrade your installed version of setuptools and try again::
+3. Launch the server::
 
-     pip install -U setuptools
+     ~/x84-env/bin/x84
 
+   On first launch, default configuration files are written to
+   ``~/.x84/default.ini`` and ``~/.x84/logging.ini``, and an ssh host key is
+   generated.
 
-4. Launch the *x84.engine* python module::
-
-     x84
-
-5. Telnet to 127.0.0.1 6023, Assuming a *bsd telnet* client::
+4. Telnet to 127.0.0.1 port 6023, or ssh to port 6022::
 
      telnet localhost 6023
+     ssh -p 6022 new@localhost
+
+   The first account created becomes the sysop.
 
 All data files are written to ``~/.x84/``.  To create a custom board,
 you might copy the ``default`` folder of the *x/84* python module to a
@@ -117,8 +108,7 @@ section for preparing a developer's environment if you wish to contribute
 upstream.  Of note, the *Terminal* interface is used for keyboard input
 and screen output, and is very well-documented in blessed_.
 
-This project isn't terribly serious (for example, there are no tests), though
-contributions (especially fixes and documentation) are welcome.  See the
+Contributions (especially fixes and documentation) are welcome.  See the
 project on github_ for source tree and issue tracking.  If there are features,
 bugs, or changes you would like to see, feel free to open an issue.
 
@@ -133,7 +123,6 @@ on *irc.efnet.org*.
 .. _Sauce: https://github.com/tehmaze/sauce
 .. _syncterm: http://syncterm.bbsdev.net/
 .. _python: https://www.python.org/
-.. _pip: http://guide.python-distribute.org/installation.html#installing-pip
 .. _Documentation: http://x84.readthedocs.org/
 .. _developers: https://x84.readthedocs.org/en/latest/developers.html
 .. _clients: http://x84.readthedocs.org/en/latest/project_details.html#compatible-clients
