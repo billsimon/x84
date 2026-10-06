@@ -10,11 +10,15 @@ board, intra-bbs messaging is provided by a web module, for example.
 Starting a web server
 =====================
 
+The web server requires the ``web`` extra to be installed::
+
+    pip install 'x84[web]'
+
 Of your ``~/.x84/default.ini`` file, set the configuration of the ``[web]`` section
 value ``enabled = yes``  (by default, it is ``no``).  You will also require a
 certificate, key, and sometimes a chain certificate file -- **only** HTTPS is
-supported at this time.  This is documented in more detail in the "Configuring a
-hub" section of the `message network`_ page.
+supported at this time, using TLS 1.2 or later.  This is documented in more
+detail in the "Configuring a hub" section of the `message network`_ page.
 
 For the server to successfully launch, at least one module must be enabled, the
 simple example modules ``oneliners, lastcallers`` may be enabled, for example::

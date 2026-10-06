@@ -1,3 +1,75 @@
+3.0.0 (unreleased)
+  - Python 3: x/84 now requires Python 3.11 or later; Python 2 is no longer
+    supported.  Databases, configuration files, and password hashes of
+    previous versions are compatible.
+  - packaging: setup.py is replaced by pyproject.toml.  Dependencies are
+    updated to current versions: blessed 1.40+, paramiko 3.2+, sqlitedict
+    2.1+, bcrypt 4+, irc 20+, feedparser 6+.  The 'with_crypto' extra is
+    removed (bcrypt and paramiko are always installed, as binary wheels are
+    available); the web server is installed by the 'web' extra, served by
+    cheroot and the standard ssl module rather than CherryPy and pyOpenSSL.
+  - enhancement: a test suite, including integration tests of telnet and ssh
+    clients against a running server, run by GitHub Actions (replacing
+    Travis CI).
+  - enhancement: session sub-processes are started by 'forkserver' (or
+    'spawn'), never by 'fork' of the multi-threaded engine, which could
+    deadlock.
+  - enhancement: graceful shutdown on SIGTERM; locks held by sessions are
+    released when they disconnect.
+  - enhancement: ssh host keys of any type supported by paramiko (rsa, ecdsa,
+    ed25519) may be loaded; users may authorize ed25519 and ecdsa public
+    keys.  Generated host keys are 3072-bit rsa, readable only by owner.
+  - enhancement: weather.py uses the free Open-Meteo API, the AccuWeather API
+    it used is no longer available.  Locations may be searched by city or
+    postal code worldwide.
+  - enhancement: irc chat connects to irc.libera.chat with verified TLS by
+    default, with a new 'ssl_verify' option of section [irc].
+  - removed: the shroo.ms intra-bbs oneliners integration (its parse.com
+    backend was discontinued).
+  - security: sftp permitted non-sysop users to overwrite any existing file,
+    and to write outside of the uploads folder by relative path.
+  - security: sftp did not hide the uploads folder from non-sysop users when
+    referenced with a trailing slash.
+  - security: message tag moderation ('moderated_tags') permitted all users
+    to tag messages, as though they were moderators.
+  - security: the profile editor displayed the stored password hash.
+  - security: the lastcallers and oneliners web modules did not escape
+    user-provided text (cross-site scripting).
+  - security: database requests by sessions are limited to dictionary
+    methods; the database file could previously be deleted.
+  - security: msgserve authentication tokens are compared in constant time,
+    and those dated in the future are rejected.
+  - bugfix: database locks were not shared between session processes.
+  - bugfix: 'global' broadcast events (new message, new oneliner, automsg)
+    were never received by other sessions.
+  - bugfix: keyboard input buffered while a script awaited other events was
+    received in reverse order.
+  - bugfix: idle timeout of [system] option 'timeout' was never enforced.
+  - bugfix: Pager windows could not be scrolled.
+  - bugfix: each LineEditor, Lightbar, Selector, Pager, and ScrollingEditor
+    instance appended to globally shared keyset lists.
+  - bugfix: the telnet server discarded the final NEW_ENVIRON variable.
+  - bugfix: a configuration without an [ssh] section failed to start.
+  - bugfix: session pipes could be corrupted by concurrent writes.
+  - bugfix: message networks: the first message (id 0) was never served,
+    batch limits could skip messages, and duplicates were not detected.
+  - bugfix: who's online 'send message' called a script that no longer
+    exists, and its remote-disconnect disconnected the requesting session.
+  - bugfix: chat resized the terminal to swapped dimensions after an
+    event-driven chat request.
+  - bugfix: oneliners minimum-elapsed time between posts was inverted.
+  - bugfix: votes cast concurrently could be lost.
+  - bugfix: fbrowse uploads could replace existing files, and descriptions
+    of ASCII collections were saved to the wrong file.
+  - bugfix: [fail2ban] ip lists may be space-separated as documented, and
+    whitelisted addresses are never banned.
+  - bugfix: deleting a user did not delete their attributes, which a new
+    account of the same name would inherit.
+  - bugfix: [main] and [msgarea] option 'colored_menu_items' could not be
+    disabled.
+  - bugfix: the default logging configuration failed when its folder was not
+    ~/.x84.
+
 2.0.15
   - bugfix: upgraded six version to 1.9.0 to meet blessed requirements
   - enhancement: added 'raw' flag to x84.bbs.door.Door to send raw output to

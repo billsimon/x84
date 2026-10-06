@@ -48,7 +48,8 @@ copyright = u'2003, Jeff Quast'
 # built documents.
 #
 # The short X.Y version.
-version = '2.0.15'
+from x84 import __version__  # noqa
+version = __version__
 # The full version, including alpha/beta/rc tags.
 release = version
 
