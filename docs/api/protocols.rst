@@ -36,6 +36,19 @@ Protocols
    :members:
    :show-inheritance:
 
+``x84.modem``
+-------------
+
+.. automodule:: x84.modem
+   :members:
+   :show-inheritance:
+
+``x84.modem_bridge``
+--------------------
+
+.. automodule:: x84.modem_bridge
+   :members:
+
 ``x84.sftp``
 ------------
 

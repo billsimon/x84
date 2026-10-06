@@ -24,6 +24,14 @@
     postal code worldwide.
   - enhancement: irc chat connects to irc.libera.chat with verified TLS by
     default, with a new 'ssl_verify' option of section [irc].
+  - enhancement: dial-in modem callers, answered by datamodem, connect by
+    the new x84-modem-bridge command to a modem server (section [modem]),
+    with their connect rate and caller ID in the session environment, and
+    a modem login script, matrix_modem.  Artwork is skipped below
+    [modem] art_min_rate, 2400 bps by default.
+  - enhancement: the engine stops reading a session's output while its
+    client has much unsent, so that the session waits rather than queueing
+    output without limit; for modem callers, beyond 2 KB.
   - removed: the shroo.ms intra-bbs oneliners integration (its parse.com
     backend was discontinued).
   - security: sftp permitted non-sysop users to overwrite any existing file,

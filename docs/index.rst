@@ -14,6 +14,7 @@ Contents:
    project_details
    msgnet
    doors
+   modem
    web
    developers
    default_api
