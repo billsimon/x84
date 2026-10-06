@@ -1,12 +1,8 @@
 """ SSH server for x84. """
 
-from __future__ import absolute_import
-
 # standard
 import threading
 import logging
-import socket
-import array
 import errno
 import time
 import os
@@ -28,7 +24,13 @@ from x84.sftp import X84SFTPServer
 
 # 3rd-party
 import paramiko
-import paramiko.py3compat
+
+
+def _decode(value):
+    """ Return ``value`` received by ssh protocol as str. """
+    if isinstance(value, bytes):
+        return value.decode('utf8', 'replace')
+    return value
 
 
 class SshClient(BaseClient):
@@ -94,7 +96,7 @@ class SshClient(BaseClient):
         if self.channel is None:
             # channel has not yet been negotiated
             return False
-        return self.send_buffer.__len__() and self.channel.send_ready()
+        return bool(len(self.send_buffer)) and self.channel.send_ready()
 
     def _send(self, send_bytes):
         """
@@ -107,8 +109,8 @@ class SshClient(BaseClient):
             return self.channel.send(send_bytes)
         except EOFError:
             raise Disconnected('EOFError')
-        except socket.error as err:
-            if err[0] == errno.EDEADLK:
+        except OSError as err:
+            if err.errno == errno.EDEADLK:
                 self.log.debug('{self.addrport}: {err} (bandwidth exceed)'
                                .format(self=self, err=err))
                 return 0
@@ -121,16 +123,18 @@ class SshClient(BaseClient):
         :raises Disconnected: client has disconnected (cannot write to socket).
         """
         if not self.send_ready():
-            self.log.warn('send() called on empty buffer')
+            self.log.warning('send() called on empty buffer')
             return 0
 
-        ready_bytes = bytes(''.join(self.send_buffer))
-        self.send_buffer = array.array('c')
+        with self._send_lock:
+            ready_bytes = bytes(self.send_buffer)
+            self.send_buffer = bytearray()
 
         sent = self._send(ready_bytes)
         if sent < len(ready_bytes):
             # re-buffer data that could not be pushed to socket;
-            self.send_buffer.fromstring(ready_bytes[sent:])
+            with self._send_lock:
+                self.send_buffer[0:0] = ready_bytes[sent:]
         return sent
 
     def recv_ready(self):
@@ -157,11 +161,11 @@ class SshClient(BaseClient):
             recv = len(data)
             if 0 == recv:
                 raise Disconnected('Closed by client (EOF)')
-        except socket.error as err:
+        except OSError as err:
             raise Disconnected('socket error: {err}'.format(err=err))
         self.bytes_received += recv
         self.last_input_time = time.time()
-        self.recv_buffer.fromstring(data)
+        self.recv_buffer.extend(data)
         return recv
 
 
@@ -207,8 +211,8 @@ class ConnectSsh(BaseConnect):
 
             def detected():
                 """ Whether shell or SFTP session has been detected. """
-                return (ssh_session.shell_requested.isSet() or
-                        ssh_session.sftp_requested.isSet())
+                return (ssh_session.shell_requested.is_set() or
+                        ssh_session.sftp_requested.is_set())
 
             self.client.transport.start_server(server=ssh_session)
 
@@ -251,15 +255,15 @@ class ConnectSsh(BaseConnect):
                 return spawn_client_session(client=self.client,
                                             matrix_kwargs=matrix_kwargs)
 
-        except (paramiko.SSHException, socket.error) as err:
+        except (paramiko.SSHException, OSError) as err:
             self.log.debug('{client.addrport}: connection closed: {err}'
                            .format(client=self.client, err=err))
         except EOFError:
             self.log.debug('{client.addrport}: EOF from client'
                            .format(client=self.client))
         except Exception as err:
-            self.log.debug('{client.addrport}: connection closed: {err}'
-                           .format(client=self.client, err=err))
+            self.log.exception('{client.addrport}: connection closed: {err}'
+                               .format(client=self.client, err=err))
         else:
             self.log.debug('{client.addrport}: shell not requested'
                            .format(client=self.client))
@@ -399,7 +403,7 @@ class SshSessionServer(paramiko.ServerInterface):
     def check_channel_pty_request(self, channel, term, width, height, *_):
         # pylint: disable=W0613
         #         Unused argument 'channel'
-        self.client.env['TERM'] = term
+        self.client.env['TERM'] = _decode(term)
         self.client.env['LINES'] = str(height)
         self.client.env['COLUMNS'] = str(width)
         return True
@@ -416,6 +420,14 @@ class SshSessionServer(paramiko.ServerInterface):
     def check_channel_env_request(self, channel, name, value):
         # pylint: disable=W0613
         #         Unused argument 'channel'
+        name, value = _decode(name), _decode(value)
+        if name in ('TERM', 'LINES', 'COLUMNS', 'encoding',
+                    'connection-type'):
+            # these values are negotiated by protocol, not by the client's
+            # environment variables.
+            self.log.debug('env request: [{0}] = {1} (ignored)'
+                           .format(name, value))
+            return False
         self.log.debug('env request: [{0}] = {1}'.format(name, value))
         self.client.env[name] = value
         return True
@@ -428,74 +440,72 @@ class SshServer(BaseServer):
     client_factory = SshClient
     client_factory_kwargs = dict(on_naws=on_naws)
     connect_factory = ConnectSsh
+    config_section = 'ssh'
+    default_port = 22
 
     @classmethod
     def connect_factory_kwargs(cls, instance):
         return dict(server_host_key=instance.host_key)
 
-    # Dictionary of active clients, (file descriptor, SshClient,)
-    clients = {}
-
     def __init__(self, config):
         """ Class initializer. """
-        self.log = logging.getLogger(__name__)
-        self.config = config
-        self.address = config.get('ssh', 'addr')
-        self.port = config.getint('ssh', 'port')
-
-        if self.config.has_option('ssh', 'HostKey'):
-            filename = config.get('ssh', 'HostKey')
+        if config.has_option('ssh', 'HostKey'):
+            filename = os.path.expanduser(config.get('ssh', 'HostKey'))
         else:
             filename = os.path.join(
                 os.path.expanduser((config.get('system', 'datapath'))),
                 'ssh_host_rsa_key')
 
+        self.log = logging.getLogger(__name__)
+        self.config = config
         if not os.path.exists(filename):
             self.host_key = self.generate_host_key(filename)
         else:
-            self.host_key = paramiko.RSAKey(filename=filename)
-            self.log.debug('Loaded host key {0}'.format(filename))
+            # any key type supported by paramiko (rsa, ecdsa, ed25519).
+            self.host_key = paramiko.PKey.from_path(filename)
+            self.log.debug('Loaded {0} host key {1}'
+                           .format(self.host_key.get_name(), filename))
 
-        # bind
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(
-            socket.SOL_SOCKET, socket.SO_REUSEADDR, True)
-        try:
-            self.server_socket.bind((self.address, self.port))
-            self.server_socket.listen(self.LISTEN_BACKLOG)
-        except socket.error as err:
-            self.log.error('Unable to bind {self.address}:{self.port}, {err}'
-                           .format(self=self, err=err))
-            exit(1)
-        self.log.info('ssh listening on {self.address}:{self.port}/tcp'
-                      .format(self=self))
+        if (config.has_section('sftp') and
+                config.has_option('sftp', 'enabled') and
+                config.getboolean('sftp', 'enabled')):
+            from x84.sftp import prepare_root
+            prepare_root(os.path.expanduser(config.get('sftp', 'root')))
+
+        BaseServer.__init__(self, config)
 
     def generate_host_key(self, filename):
         """ Generate server host key to local filepath ``filename``. """
         from paramiko import RSAKey
 
-        bits = 4096
+        bits = 3072
         if self.config.has_option('ssh', 'HostKeyBits'):
-            bits = self.config.getint('ssh', 'HostKeyBits')
+            bits = max(2048, self.config.getint('ssh', 'HostKeyBits'))
 
-        # generate private key and save,
+        folder = os.path.dirname(filename)
+        if folder and not os.path.isdir(folder):
+            os.makedirs(folder)
+
+        # generate private key and save, readable only by owner.
         self.log.info('Generating {bits}-bit RSA public/private keypair.'
                       .format(bits=bits))
         priv_key = RSAKey.generate(bits=bits)
         priv_key.write_private_key_file(filename, password=None)
+        os.chmod(filename, 0o600)
         self.log.debug('{filename} saved.'.format(filename=filename))
 
         # save public key,
-        pub = RSAKey(filename=filename, password=None)
         with open('{0}.pub'.format(filename,), 'w') as fp:
-            fp.write("{0} {1}".format(pub.get_name(), pub.get_base64()))
+            fp.write("{0} {1}\n".format(priv_key.get_name(),
+                                        priv_key.get_base64()))
         self.log.debug('{filename}.pub saved.'.format(filename=filename))
         return priv_key
 
     def client_fds(self):
         """ Return list of client file descriptors to poll for read/write. """
-        return [_client.channel.fileno() for _client in self.clients.values()
-                if _client.channel is not None]
+        return [_client.channel.fileno()
+                for _client in list(self.clients.values())
+                if _client.channel is not None and not _client.channel.closed]
 
     def clients_ready(self, ready_fds=None):
         """
@@ -503,5 +513,5 @@ class SshServer(BaseServer):
 
         The ``ready_fds`` parameter is ignored by the SSH Server.
         """
-        return [client for client in self.clients.values()
+        return [client for client in list(self.clients.values())
                 if client.recv_ready()]

@@ -37,28 +37,22 @@ Changes from miniboa:
 #   under the License.
 # ------------------------------------------------------------------------------
 
-from __future__ import absolute_import
-
 # std
-import socket
-import array
 import time
-import logging
 import select
-import errno
-from telnetlib import LINEMODE, NAWS, NEW_ENVIRON, ENCRYPT, AUTHENTICATION
-from telnetlib import BINARY, SGA, ECHO, STATUS, TTYPE, TSPEED, LFLOW
-from telnetlib import XDISPLOC, IAC, DONT, DO, WONT, WILL, SE, NOP, DM, BRK
-from telnetlib import IP, AO, AYT, EC, EL, GA, SB
 
 # local
 from x84.bbs.exception import Disconnected
-from .terminal import spawn_client_session, on_naws
-from .client import BaseClient, BaseConnect
-from .server import BaseServer
+from x84.bbs.telnet import (
+    LINEMODE, NAWS, NEW_ENVIRON, ENCRYPT, AUTHENTICATION,
+    BINARY, SGA, ECHO, STATUS, TTYPE, TSPEED, LFLOW,
+    XDISPLOC, IAC, DONT, DO, WONT, WILL, SE, NOP, DM, BRK,
+    IP, AO, AYT, EC, EL, GA, SB, IS, SEND,
+)
+from x84.terminal import spawn_client_session, on_naws
+from x84.client import BaseClient, BaseConnect
+from x84.server import BaseServer
 
-IS = chr(0)  # Sub-process negotiation IS command
-SEND = chr(1)  # Sub-process negotiation SEND command
 UNSUPPORTED_WILL = (LINEMODE, LFLOW, TSPEED, ENCRYPT, AUTHENTICATION)
 
 #---[ Telnet Notes ]-----------------------------------------------------------
@@ -132,7 +126,7 @@ def name_option(option):
     Perform introspection of global CONSTANTS for equivalent values,
     and return a string that displays its possible meanings
     """
-    values = ';?'.join([k for k, v in globals().iteritems()
+    values = ';?'.join([k for k, v in globals().items()
                         if option == v and k not in ('SEND', 'IS',)])
     return values if values != '' else str(ord(option))
 
@@ -178,7 +172,7 @@ class TelnetClient(BaseClient):
 
     def __init__(self, sock, address_pair, on_naws=None):
         super(TelnetClient, self).__init__(sock, address_pair, on_naws)
-        self.telnet_sb_buffer = array.array('c')
+        self.telnet_sb_buffer = bytearray()
 
         # State variables for interpreting incoming telnet commands
         self.telnet_got_iac = False
@@ -244,12 +238,12 @@ class TelnetClient(BaseClient):
         """
         if self.ENV_REQUESTED:
             return  # avoid asking twice ..
-        rstr = bytes(''.join((IAC, SB, NEW_ENVIRON, SEND, chr(0))))
-        rstr += bytes(chr(0).join(
-            ("USER TERM SHELL COLUMNS LINES C_CTYPE XTERM_LOCALE DISPLAY "
-             "SSH_CLIENT SSH_CONNECTION SSH_TTY HOME HOSTNAME PWD MAIL LANG "
-             "PWD UID USER_ID EDITOR LOGNAME".split())))
-        rstr += bytes(''.join((chr(3), IAC, SE)))
+        rstr = b''.join((IAC, SB, NEW_ENVIRON, SEND, b'\x00'))
+        rstr += b'\x00'.join(
+            (b"USER TERM SHELL COLUMNS LINES C_CTYPE XTERM_LOCALE DISPLAY "
+             b"SSH_CLIENT SSH_CONNECTION SSH_TTY HOME HOSTNAME PWD MAIL LANG "
+             b"PWD UID USER_ID EDITOR LOGNAME".split()))
+        rstr += b''.join((b'\x03', IAC, SE))
         self.ENV_REQUESTED = True
         self.send_str(rstr)
 
@@ -265,8 +259,7 @@ class TelnetClient(BaseClient):
         """
         Sends IAC SB TTYPE SEND IAC SE
         """
-        self.send_str(bytes(''.join((
-            IAC, SB, TTYPE, SEND, IAC, SE))))
+        self.send_str(b''.join((IAC, SB, TTYPE, SEND, IAC, SE)))
 
     def recv_ready(self):
         """
@@ -289,9 +282,9 @@ class TelnetClient(BaseClient):
             if recv == 0:
                 raise Disconnected('Closed by client (EOF)')
 
-        except socket.error as err:
-            if err.errno == errno.EWOULDBLOCK:
-                return 0
+        except BlockingIOError:
+            return 0
+        except OSError as err:
             raise Disconnected('socket_recv error: {0}'.format(err))
 
         self.bytes_received += recv
@@ -299,8 +292,8 @@ class TelnetClient(BaseClient):
 
         # Test for telnet commands, non-telnet bytes
         # are pushed to self.recv_buffer (side-effect),
-        for byte in data:
-            self._iac_sniffer(byte)
+        for idx in range(recv):
+            self._iac_sniffer(data[idx:idx + 1])
         return recv
 
     def send_unicode(self, ucs, encoding='utf8'):
@@ -312,7 +305,7 @@ class TelnetClient(BaseClient):
         """
         Buffer non-telnet commands bytestrings into recv_buffer.
         """
-        self.recv_buffer.fromstring(byte)
+        self.recv_buffer.extend(byte)
 
     def _iac_sniffer(self, byte):
         """
@@ -326,7 +319,7 @@ class TelnetClient(BaseClient):
                 self.telnet_got_iac = True
             # Are we currently in a sub-negotiation?
             elif self.telnet_got_sb is True:
-                self.telnet_sb_buffer.fromstring(byte)
+                self.telnet_sb_buffer.extend(byte)
                 # Sanity check on length
                 if len(self.telnet_sb_buffer) >= self.SB_MAXLEN:
                     raise Disconnected('sub-negotiation buffer filled')
@@ -338,7 +331,7 @@ class TelnetClient(BaseClient):
         # Did we get sent a second IAC?
         if byte == IAC and self.telnet_got_sb is True:
             # Must be an escaped 255 (IAC + IAC)
-            self.telnet_sb_buffer.fromstring(byte)
+            self.telnet_sb_buffer.extend(byte)
             self.telnet_got_iac = False
         # Do we already have an IAC + CMD?
         elif self.telnet_got_cmd is not None:
@@ -361,7 +354,7 @@ class TelnetClient(BaseClient):
         if cmd == SB:
             # Begin capturing a sub-negotiation string
             self.telnet_got_sb = True
-            self.telnet_sb_buffer = array.array('c')
+            self.telnet_sb_buffer = bytearray()
         elif cmd == SE:
             # Stop capturing a sub-negotiation string
             self.telnet_got_sb = False
@@ -375,24 +368,24 @@ class TelnetClient(BaseClient):
                           .format(self=self))
         elif cmd == AO:
             flushed = len(self.recv_buffer)
-            self.recv_buffer = array.array('c')
+            self.recv_buffer = bytearray()
             self.log.debug('Abort Output (AO); %s bytes discarded.', flushed)
         elif cmd == AYT:
-            self.send_str(bytes('\b'))
+            self.send_str(b'\b')
             self.log.debug('Are You There (AYT); "\\b" sent.')
         elif cmd == EC:
-            self.recv_buffer.fromstring('\b')
+            self.recv_buffer.extend(b'\b')
             self.log.debug('Erase Character (EC); "\\b" queued.')
         elif cmd == EL:
-            self.log.warn('Erase Line (EC) received; ignored.')
+            self.log.warning('Erase Line (EC) received; ignored.')
         elif cmd == GA:
-            self.log.warn('Go Ahead (GA) received; ignored.')
+            self.log.warning('Go Ahead (GA) received; ignored.')
         elif cmd == NOP:
             self.log.debug('NUL ignored.')
         elif cmd == DM:
-            self.log.warn('Data Mark (DM) received; ignored.')
+            self.log.warning('Data Mark (DM) received; ignored.')
         elif cmd == BRK:
-            self.log.warn('Break (BRK) received; ignored.')
+            self.log.warning('Break (BRK) received; ignored.')
         else:
             self.log.error('_two_byte_cmd invalid: %r', cmd)
         self.telnet_got_iac = False
@@ -478,25 +471,26 @@ class TelnetClient(BaseClient):
         Process a DO STATUS sub-negotiation received by DE. (rfc859)
         """
         # warning:
-        rstr = bytes(''.join((IAC, SB, STATUS, IS)))
+        rstr = b''.join((IAC, SB, STATUS, IS))
         for opt, status in self.telnet_opt_dict.items():
             # my_want_state_is_will
             if status.local_option is True:
                 self.log.debug('send WILL %s', name_option(opt))
-                rstr += bytes(''.join((WILL, opt)))
+                rstr += WILL + opt
             elif status.reply_pending is True and opt in (ECHO, SGA):
                 self.log.debug('send WILL %s (want)', name_option(opt))
-                rstr += bytes(''.join((WILL, opt)))
+                rstr += WILL + opt
             # his_want_state_is_will
             elif status.remote_option is True:
                 self.log.debug('send DO %s', name_option(opt))
-                rstr += bytes(''.join((DO, opt)))
+                rstr += DO + opt
             elif (status.reply_pending is True
                     and opt in (NEW_ENVIRON, NAWS, TTYPE)):
                 self.log.debug('send DO %s (want)', name_option(opt))
-                rstr += bytes(''.join((DO, opt)))
-        rstr += bytes(''.join((IAC, SE)))
-        self.log.debug('send %s', ' '.join(name_option(opt) for opt in rstr))
+                rstr += DO + opt
+        rstr += IAC + SE
+        self.log.debug('send %s', ' '.join(name_option(rstr[idx:idx + 1])
+                                           for idx in range(len(rstr))))
         self.send_str(rstr)
 
     def _handle_dont(self, option):
@@ -549,8 +543,8 @@ class TelnetClient(BaseClient):
         elif option == STATUS:
             if self.check_remote_option(STATUS) is not True:
                 self._note_remote_option(STATUS, True)
-                self.send_str(bytes(''.join((
-                    IAC, SB, STATUS, SEND, IAC, SE))))  # go ahead
+                self.send_str(b''.join((
+                    IAC, SB, STATUS, SEND, IAC, SE)))  # go ahead
         elif option in UNSUPPORTED_WILL:
             if self.check_remote_option(option) is not False:
                 # let DE know we refuse to do linemode, encryption, etc.
@@ -575,11 +569,11 @@ class TelnetClient(BaseClient):
             self._note_local_option(NEW_ENVIRON, True)
         elif option == XDISPLOC:
             # if they want to send it, go ahead.
-            if self.check_remote_option(XDISPLOC):
+            if self.check_remote_option(XDISPLOC) is not True:
                 self._note_remote_option(XDISPLOC, True)
                 self._iac_do(XDISPLOC)
-                self.send_str(bytes(''.join((
-                    IAC, SB, XDISPLOC, SEND, IAC, SE))))
+                self.send_str(b''.join((
+                    IAC, SB, XDISPLOC, SEND, IAC, SE)))
         elif option == TTYPE:
             if self.check_remote_option(TTYPE) in (False, UNKNOWN):
                 self._note_remote_option(TTYPE, True)
@@ -634,34 +628,33 @@ class TelnetClient(BaseClient):
         Figures out what to do with a received sub-negotiation block.
         """
 
-        buf = self.telnet_sb_buffer
+        buf = bytes(self.telnet_sb_buffer)
+        self.telnet_sb_buffer = bytearray()
         if 0 == len(buf):
             self.log.error('nil SB')
             return
+        option, command = buf[0:1], buf[1:2]
         self.log.debug('recv SB: %s %s',
-                       name_option(buf[0]),
-                       'IS %r' % (buf[2:],) if len(buf) > 1 and buf[1] is IS
+                       name_option(option),
+                       'IS %r' % (buf[2:],) if command == IS
                        else repr(buf[1:]))
-        if 1 == len(buf) and buf[0] == chr(0):
+        if buf == b'\x00':
             self.log.error('0nil SB')
-            return
         elif len(buf) < 2:
             self.log.error('SB too short')
-            return
-        elif (TTYPE, IS) == (buf[0], buf[1]):
-            self._sb_ttype(buf[2:].tostring())
-        elif (XDISPLOC, IS) == (buf[0], buf[1]):
-            self._sb_xdisploc(buf[2:].tostring())
-        elif (NEW_ENVIRON, IS) == (buf[0], buf[1]):
-            self._sb_env(buf[2:].tostring())
-        elif NAWS == buf[0]:
+        elif (TTYPE, IS) == (option, command):
+            self._sb_ttype(buf[2:].decode('latin-1'))
+        elif (XDISPLOC, IS) == (option, command):
+            self._sb_xdisploc(buf[2:].decode('latin-1'))
+        elif (NEW_ENVIRON, IS) == (option, command):
+            self._sb_env(buf[2:].decode('latin-1'))
+        elif NAWS == option:
             self._sb_naws(buf)
-        elif (STATUS, SEND) == (buf[0], buf[1]):
+        elif (STATUS, SEND) == (option, command):
             self._send_status()
         else:
             self.log.error('unsupported subnegotiation, %s: %r',
-                           name_option(buf[0]), buf,)
-        self.telnet_sb_buffer = ''
+                           name_option(option), buf,)
 
     def _sb_xdisploc(self, bytestring):
         """
@@ -699,14 +692,17 @@ class TelnetClient(BaseClient):
         """
         Processes incoming sub-negotiation NEW_ENVIRON
         """
-        breaks = list([idx for (idx, byte) in enumerate(bytestring)
-                       if byte in (chr(0), chr(3))])
+        # values are delimited by VAR (0) or USERVAR (3), with a VALUE (1)
+        # separating each key from its value.  The final value is not
+        # terminated, so a sentinel break is appended at its end.
+        breaks = [idx for (idx, char) in enumerate(bytestring)
+                  if char in ('\x00', '\x03')] + [len(bytestring)]
         for start, end in zip(breaks, breaks[1:]):
-            pair = bytestring[start + 1:end].split(chr(1))
+            pair = bytestring[start + 1:end].split('\x01')
             if len(pair) == 1:
                 if (pair[0] in self.env
                         and pair[0] not in ('LINES', 'COLUMNS', 'TERM')):
-                    self.log.warn("del env[%r]", pair[0])
+                    self.log.warning("del env[%r]", pair[0])
                     del self.env[pair[0]]
             elif len(pair) == 2:
                 if pair[0] == 'TERM':
@@ -719,7 +715,7 @@ class TelnetClient(BaseClient):
                 elif pair[1] == self.env[pair[0]]:
                     self.log.debug('env[%r] repeated', pair[0])
                 else:
-                    self.log.warn('%s=%s; conflicting value %s ignored.',
+                    self.log.warning('%s=%s; conflicting value %s ignored.',
                                   pair[0], self.env[pair[0]], pair[1])
             else:
                 self.log.error('client NEW_ENVIRON; invalid %r', pair)
@@ -734,8 +730,8 @@ class TelnetClient(BaseClient):
                            .format(self=self, buflen=len(charbuf)))
             return
 
-        columns = (256 * ord(charbuf[1])) + ord(charbuf[2])
-        rows = (256 * ord(charbuf[3])) + ord(charbuf[4])
+        columns = (256 * charbuf[1]) + charbuf[2]
+        rows = (256 * charbuf[3]) + charbuf[4]
         old_rows = self.env.get('LINES', None)
         old_columns = self.env.get('COLUMNS', None)
         if (old_rows == str(rows) and old_columns == str(columns)):
@@ -807,28 +803,28 @@ class TelnetClient(BaseClient):
         Send a Telnet IAC "DO" sequence.
         """
         self.log.debug('send IAC DO %s', name_option(option))
-        self.send_str(bytes(''.join((IAC, DO, option))))
+        self.send_str(b''.join((IAC, DO, option)))
 
     def _iac_dont(self, option):
         """
         Send a Telnet IAC "DONT" sequence.
         """
         self.log.debug('send IAC DONT %s', name_option(option))
-        self.send_str(bytes(''.join((IAC, DONT, option))))
+        self.send_str(b''.join((IAC, DONT, option)))
 
     def _iac_will(self, option):
         """
         Send a Telnet IAC "WILL" sequence.
         """
         self.log.debug('send IAC WILL %s', name_option(option))
-        self.send_str(bytes(''.join((IAC, WILL, option))))
+        self.send_str(b''.join((IAC, WILL, option)))
 
     def _iac_wont(self, option):
         """
         Send a Telnet IAC "WONT" sequence.
         """
         self.log.debug('send IAC WONT %s', name_option(option))
-        self.send_str(bytes(''.join((IAC, WONT, option))))
+        self.send_str(b''.join((IAC, WONT, option)))
 
 
 class ConnectTelnet(BaseConnect):
@@ -906,15 +902,15 @@ class ConnectTelnet(BaseConnect):
 
             if self.client.is_active():
                 return spawn_client_session(client=self.client)
-        except (Disconnected, socket.error) as err:
+        except (Disconnected, OSError) as err:
             self.log.debug('{client.addrport}: connection closed: {err}'
                            .format(client=self.client, err=err))
         except EOFError:
             self.log.debug('{client.addrport}: EOF from client'
                            .format(client=self.client))
         except Exception as err:
-            self.log.debug('{client.addrport}: connection closed: {err}'
-                           .format(client=self.client, err=err))
+            self.log.exception('{client.addrport}: connection closed: {err}'
+                               .format(client=self.client, err=err))
         finally:
             self.stopped = True
         self.client.deactivate()
@@ -1025,31 +1021,5 @@ class TelnetServer(BaseServer):
     client_factory = TelnetClient
     connect_factory = ConnectTelnet
     client_factory_kwargs = dict(on_naws=on_naws)
-
-    # Dictionary of active clients, (file descriptor, TelnetClient,)
-    clients = {}
-
-    def __init__(self, config):
-        """
-        Create a new Telnet Server.
-
-        :param ConfigParser.ConfigParser config: configuration section
-            ``[telnet]``, with options ``'addr'``, ``'port'``
-        """
-        self.log = logging.getLogger(__name__)
-        self.address = config.get('telnet', 'addr')
-        self.port = config.getint('telnet', 'port')
-
-        # bind
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setsockopt(
-            socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            self.server_socket.bind((self.address, self.port))
-            self.server_socket.listen(self.LISTEN_BACKLOG)
-        except socket.error as err:
-            self.log.error('Unable to bind {0}:{1}: {2}'
-                           .format(self.address, self.port, err))
-            exit(1)
-        self.log.info('telnet listening on {self.address}:{self.port}/tcp'
-                      .format(self=self))
+    config_section = 'telnet'
+    default_port = 23
