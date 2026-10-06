@@ -1,11 +1,37 @@
 """ Command-line parser for x/84. """
-import getopt
+import argparse
 import sys
 import os
 
 
-def parse_args():
-    """ Parse system arguments and return lookup path for bbs and log ini. """
+def get_parser():
+    """ Return :class:`argparse.ArgumentParser` for the x84 command. """
+    from x84 import __version__
+    parser = argparse.ArgumentParser(
+        prog=os.path.basename(sys.argv[0]) or 'x84',
+        description='x/84 telnet, ssh and rlogin BBS server.')
+    parser.add_argument('--config', metavar='FILEPATH',
+                        help='location of bbs configuration file '
+                             '(default: /etc/x84/default.ini, then '
+                             '~/.x84/default.ini)')
+    parser.add_argument('--logger', metavar='FILEPATH',
+                        help='location of logging configuration file '
+                             '(default: /etc/x84/logging.ini, then '
+                             '~/.x84/logging.ini)')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s {0}'.format(__version__))
+    return parser
+
+
+def parse_args(argv=None):
+    """
+    Parse system arguments and return lookup path for bbs and log ini.
+
+    :param list argv: arguments to parse, ``sys.argv[1:]`` by default.
+    :rtype: tuple
+    :returns: tuple of ``(lookup_bbs, lookup_log)``, each a tuple of
+              file paths in order of preference.
+    """
     if sys.platform.lower().startswith('win32'):
         system_path = os.path.join('C:', 'x84')
     else:
@@ -17,28 +43,9 @@ def parse_args():
     lookup_log = (os.path.join(system_path, 'logging.ini'),
                   os.path.expanduser(os.path.join('~', '.x84', 'logging.ini')))
 
-    try:
-        opts, tail = getopt.getopt(sys.argv[1:], u'', (
-            'config=', 'logger=', 'help'))
-    except getopt.GetoptError as err:
-        sys.stderr.write('{0}\n'.format(err))
-        return 1
-    for opt, arg in opts:
-        if opt in ('--config',):
-            lookup_bbs = (arg,)
-        elif opt in ('--logger',):
-            lookup_log = (arg,)
-        elif opt in ('--help',):
-            sys.stderr.write(
-                'Usage: \n'
-                '{0} [--config <filepath>] [--logger <filepath>]\n'
-                .format(os.path.basename(sys.argv[0])))
-            sys.exit(1)
-    if len(tail):
-        sys.stderr.write('Unrecognized program arguments: {0}\n'
-                         .format(tail))
-        sys.exit(1)
+    args = get_parser().parse_args(argv)
+    if args.config:
+        lookup_bbs = (args.config,)
+    if args.logger:
+        lookup_log = (args.logger,)
     return (lookup_bbs, lookup_log)
-
-
-
