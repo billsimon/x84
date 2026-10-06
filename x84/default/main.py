@@ -1,6 +1,5 @@
 """ Main menu script for x/84. """
 # std imports
-from __future__ import division
 import collections
 import os
 
@@ -27,9 +26,9 @@ MenuItem = collections.namedtuple(
 
 #: When set False, menu items are not colorized and render much
 #: faster on slower systems (such as raspberry pi).
-colored_menu_items = get_ini(
-    section='main', key='colored_menu_items', getter='getboolean'
-) or True
+colored_menu_items = (
+    not ini.CFG.has_option('main', 'colored_menu_items') or
+    get_ini(section='main', key='colored_menu_items', getter='getboolean'))
 
 #: color used for menu key entries
 color_highlight = get_ini(
@@ -67,8 +66,8 @@ def get_sesame_menu_items(session):
     # only the given examples in the generated default.ini file
     menu_items = []
     if ini.CFG.has_section('sesame'):
-        for name in filter(lambda _name: '_' not in _name,
-                           ini.CFG.options('sesame')):
+        for name in [_name for _name in ini.CFG.options('sesame')
+                     if '_' not in _name]:
 
             sesame_kwargs = {'name': name}
 

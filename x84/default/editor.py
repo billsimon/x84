@@ -33,9 +33,6 @@ def save_draft(key, ucs):
     if key is not None:
         save(key, ucs)
 
-    # pylint: disable=W0602
-    #         Using global for 'UNDO' but no assignment is done
-    global UNDO
     UNDO.append(ucs)
     if len(UNDO) > UNDOLEVELS:
         del UNDO[0]
@@ -57,7 +54,8 @@ def show_help(term):
     # clear screen
     echo(term.normal + ('\r\n' * (term.height + 1)) + term.home)
 
-    map(echo, showart(os.path.join(here, 'art', 'po-help.ans')))
+    for line in showart(os.path.join(here, 'art', 'po-help.ans')):
+        echo(line)
 
 
 def wrap_rstrip(value):
@@ -171,7 +169,7 @@ def get_lightbar(ucs):
     width = min(80, max(term.width, 40))
     yloc = 0
     height = term.height - yloc - 1
-    xloc = max(0, (term.width / 2) - (width / 2))
+    xloc = max(0, (term.width // 2) - (width // 2))
     lightbar = Lightbar(height, width, yloc, xloc)
     lightbar.glyphs['left-vert'] = lightbar.glyphs['right-vert'] = u''
     lightbar.colors['highlight'] = term.yellow_reverse
@@ -184,7 +182,7 @@ def get_lneditor(lightbar):
     term = getterminal()
     width = min(80, max(term.width, 40))
     yloc = (lightbar.yloc + lightbar.ypadding + lightbar.position[0] - 1)
-    xloc = max(0, (term.width / 2) - (width / 2))
+    xloc = max(0, (term.width // 2) - (width // 2))
     lneditor = ScrollingEditor(width=width, yloc=yloc, xloc=xloc)
     lneditor.enable_scrolling = True
     lneditor.max_length = 65534
@@ -220,11 +218,11 @@ def main(save_key=None, continue_draft=False):
     if term.kind.startswith('ansi'):
         echo(syncterm_setfont(syncterm_font))
 
-    movement = (term.KEY_UP, term.KEY_DOWN, term.KEY_NPAGE,
-                term.KEY_PPAGE, term.KEY_HOME, term.KEY_END,
+    movement = (term.KEY_UP, term.KEY_DOWN, term.KEY_PGDOWN,
+                term.KEY_PGUP, term.KEY_HOME, term.KEY_END,
                 u'\r', term.KEY_ENTER)
     keyset = {'edit': ('\r', '\n'),
-              'command': (unichr(27),),
+              'command': (u'\x1b',),
               'kill': (u'K',),
               'undo': (u'u', 'U',),
               'goto': (u'G',),
@@ -232,7 +230,7 @@ def main(save_key=None, continue_draft=False):
               'insert-before': (u'O',),
               'insert-after': (u'o',),
               'join': (u'J',),
-              'rubout': (unichr(8), unichr(127), unichr(23)),
+              'rubout': (u'\x08', u'\x7f', u'\x17'),
               }
 
     def merge():

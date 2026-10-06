@@ -50,11 +50,13 @@ def main():
         + [term.bold_blue]
         + [term.bold_white]
         + [term.normal])
-    art = open(artfile).read().decode('cp437_art') \
-        if os.path.exists(artfile) else u''
+    art = u''
+    if os.path.exists(artfile):
+        with open(artfile, 'rb') as fin:
+            art = fin.read().decode('cp437_art')
     otxt = list(art.splitlines())
     for num, line in enumerate(body):
-        while num > len(otxt):
+        while num >= len(otxt):
             otxt += [u'', ]
         otxt[num] = otxt[num][:int(term.width / 2.5)] + u' ' + line
     width = max([term.length(line) for line in otxt])
@@ -95,8 +97,8 @@ def main():
                 u'press any key...',)))
             term.inkey()
             return (None, None)
-        xloc = (term.width / 2) - (width / 2)
-        yloc = (term.height / 2) - (height / 2)
+        xloc = (term.width // 2) - (width // 2)
+        yloc = (term.height // 2) - (height // 2)
         echo(u''.join((
             term.normal,
             (u'\r\n' + term.clear_eol) * term.height,
@@ -167,7 +169,7 @@ def main():
             melting[(yloc, xloc)] -= 1
             if 0 == melting[(yloc, xloc)]:
                 del melting[(yloc, xloc)]
-        for (yloc, xloc), phase in melting.items():
+        for (yloc, xloc), phase in list(melting.items()):
             echo(u''.join((term.move(yloc, xloc), melt_colors[phase - 1],
                            char_at_pos(yloc, xloc, txt_y, txt_x),)))
             melted(yloc, xloc)
@@ -192,7 +194,7 @@ def main():
                               for n in range(num_stars)])
                 otxt = list(art.splitlines())
                 for num, line in enumerate(body):
-                    while num > len(otxt):
+                    while num >= len(otxt):
                         otxt += [u'', ]
                     otxt[num] = (otxt[num][:int(term.width / 2.5)]
                                  + u' ' + line)
@@ -233,7 +235,7 @@ def main():
 
             melt()
 
-            for star_key, star_val in stars.items():
+            for star_key, star_val in list(stars.items()):
                 erase(star_key)
                 stars[star_key] = iter_star(*star_val)
                 draw_star(*stars[star_key])

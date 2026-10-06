@@ -21,7 +21,7 @@ def banner():
     banner = '\r\n'
     for line in showart(
             os.path.join(os.path.dirname(__file__), 'art', 'online.ans'), 'cp437'):
-        banner = banner + term.move_x(max(0, (term.width / 2) - 40)) + line
+        banner = banner + term.move_x(max(0, (term.width // 2) - 40)) + line
     return (banner)
 
 
@@ -30,13 +30,12 @@ def describe(sessions):
     Returns unicode string suitable for describing the activity of
     session id's of array ``sessions``.
     """
-    from x84.bbs import getsession, getterminal, ini
+    from x84.bbs import getsession, getterminal, get_ini
     slen = lambda sessions: len(u'%d' % (len(sessions),))
     session, term = getsession(), getterminal()
-    max_user = ini.CFG.getint('nua', 'max_user')
-
+    max_user = get_ini('nua', 'max_user', getter='getint') or 10
     text = u'\r\n'.join(([u''.join((
-        term.move_x(max(0, (term.width / 2) - 40)), term.green,
+        term.move_x(max(0, (term.width // 2) - 40)), term.green,
         u'%*d' % (5 + slen(sessions), node), u' ' * 7, term.normal,
         u'%4is' % (attrs.get('idle', 0),), u' ', u' ' * 8,
         (term.bold_red(u'%-*s' % (max_user, (
@@ -66,7 +65,7 @@ def heading():
     bar = ''
     for line in showart(
             os.path.join(os.path.dirname(__file__), 'art', 'onlinebar.ans'), 'topaz'):
-        bar = bar + term.move_x(max(0, (term.width / 2) - 40)) + line
+        bar = bar + term.move_x(max(0, (term.width // 2) - 40)) + line
     return u'\r\n'.join((
         u'\r\n'.join([term.center(pline, (term.width))
                       for pline in prompt()]),
@@ -100,8 +99,8 @@ def prompt():
 
 def get_node(sessions):
     """ Prompt user for session node, Returns node & session attributes. """
-    from x84.bbs import ini, LineEditor, echo
-    max_user = ini.CFG.getint('nua', 'max_user')
+    from x84.bbs import get_ini, LineEditor, echo
+    max_user = get_ini('nua', 'max_user', getter='getint') or 10
     invalid = u'\r\ninvalid.'
     echo(u'\r\n\r\nNOdE: ')
     node = LineEditor(max_user).read()
@@ -184,13 +183,23 @@ def sendmsg(sessions):
     """
     Prompt for node and gosub 'writemsg' with recipient set to target user.
     """
-    from x84.bbs import gosub, Msg
+    from x84.bbs import getsession, getterminal, echo, Msg
+    from msgarea import (
+        prompt_subject, prompt_body, prompt_tags, do_send_message)
+    session, term = getsession(), getterminal()
     (node, tgt_session) = get_node(sessions)
     if node is not None:
         msg = Msg()
         msg.recipient = tgt_session['handle']
-        msg.tags.add('private')
-        gosub('writemsg', msg)
+        colors = {'highlight': term.yellow, 'lowlight': term.green,
+                  'backlight': term.yellow_reverse, 'text': term.white}
+        echo(u'\r\n\r\n')
+        if (prompt_subject(term=term, msg=msg, colors=colors) and
+                prompt_body(term=term, msg=msg, colors=colors) and
+                prompt_tags(session=session, term=term, msg=msg,
+                            colors=colors, public=False)):
+            do_send_message(session=session, term=term, msg=msg,
+                            colors=colors)
         return True
 
 
@@ -219,10 +228,10 @@ def main():
     while True:
         ayt_lastfresh = broadcast_ayt(ayt_lastfresh)
         inp = term.inkey(POLL_KEY)
-        if session.poll_event('refresh') or (inp in (u' ', unichr(12))):
+        if session.poll_event('refresh') or (inp in (u' ', u'\x0c')):
             dirty = time.time()
             cur_row = 0
-        elif inp.lower() in (u'q', unichr(27)) or inp.code == term.KEY_EXIT:
+        elif inp.lower() in (u'q', u'\x1b') or inp.code == term.KEY_ESCAPE:
             echo(u'\r\n\r\n')
             return
         elif inp.lower() == u'c':
@@ -273,7 +282,7 @@ def main():
         # request that all sessions update if more stale than POLL_INF,
         # or is missing session info (only AYT replied so far!),
         # or has been displayed as 'Disconnected' (marked for deletion)
-        for sid, attrs in sessions.items():
+        for sid, attrs in list(sessions.items()):
             if sid == SELF_ID:
                 continue
             if attrs.get('idle', -1) == -1 or (
@@ -307,6 +316,6 @@ def main():
             dirty = None
 
         # delete disconnected sessions
-        for sid, attrs in sessions.items()[:]:
+        for sid, attrs in list(sessions.items()):
             if attrs.get('delete', 0) == 1:
                 del sessions[sid]

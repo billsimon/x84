@@ -171,48 +171,44 @@ def vote(questionnumber):
         if inp is not None and inp.isnumeric() and int(
                 inp) <= amount_of_alternatives[questionnumber]:
 
-            # create database for user if the user hasn't made any votes
-            if session.user.handle not in db:
-                db[session.user.handle] = {}
-
-            uservotingdata = {}
-            uservotingdata = db[session.user.handle]
-
             # if user wants to create an own alternative..
+            new_alternative = None
             if int(inp) == amount_of_alternatives[questionnumber]:
                 echo(term.clear + term.red + u'\r\nPress enter to abort. ' +
                      term.move(0, 0) + term.white(u'Your answer: '))
                 le = LineEditor(48)
                 new_alternative = le.read()
-                if new_alternative == '' or new_alternative == None:
+                if not new_alternative:
                     return
-                results[(questionnumber, int(inp))] = 0  # init..
-                # init..
-                alternatives[(questionnumber, int(inp))] = new_alternative
-                amount_of_alternatives[
-                    questionnumber] = amount_of_alternatives[questionnumber] + 1
-                db['alternatives'] = alternatives
-                db['amount_of_alternatives'] = amount_of_alternatives
 
-            # if the user has voted on this question before..
-            if (index[questionnumber], 0) in uservotingdata:
-                temp2 = uservotingdata[(index[questionnumber], 0)]
-                results[(questionnumber, temp2)] = results[
-                    (questionnumber, temp2)] - 1  # remove the old vote
-                results[(questionnumber, int(inp))] = results[
-                    (questionnumber, int(inp))] + 1
-                uservotingdata[(index[questionnumber], 0)] = int(inp)
-            else:
-                uservotingdata[(index[questionnumber], 0)] = int(inp)
-                results[(questionnumber, int(inp))] = results[
-                    (questionnumber, int(inp))] + 1
+            # votes are counted while holding a lock on the database, with
+            # its tally re-read, so that concurrent votes are not lost.
+            with db:
+                results = db['results']
+                alternatives = db['alternatives']
+                amount_of_alternatives = db['amount_of_alternatives']
+                uservotingdata = db.get(session.user.handle, {})
+                choice = int(inp)
+                if new_alternative is not None:
+                    choice = amount_of_alternatives[questionnumber]
+                    results[(questionnumber, choice)] = 0  # init..
+                    alternatives[(questionnumber, choice)] = new_alternative
+                    amount_of_alternatives[questionnumber] += 1
+                    db['alternatives'] = alternatives
+                    db['amount_of_alternatives'] = amount_of_alternatives
 
-            uservotingdata[(index[questionnumber], 0)] = int(inp)
+                # if the user has voted on this question before, remove
+                # the old vote.
+                if (index[questionnumber], 0) in uservotingdata:
+                    previous = uservotingdata[(index[questionnumber], 0)]
+                    results[(questionnumber, previous)] -= 1
+                results[(questionnumber, choice)] += 1
+                uservotingdata[(index[questionnumber], 0)] = choice
+                db['results'] = results
+                db[session.user.handle] = uservotingdata
 
             echo(term.green(u'\r\nyour vote has been noted, thanks..'))
             term.inkey(2)
-            db['results'] = results
-            db[session.user.handle] = uservotingdata
             list_results(questionnumber)
             return
 
@@ -400,7 +396,7 @@ def main():
         echo(term.clear())
         for line in showart(
                 os.path.join(os.path.dirname(__file__), 'art', 'vote.ans'), 'cp437'):
-            echo(term.cyan + term.move_x(max(0, (term.width / 2) - 40)) + line)
+            echo(term.cyan + term.move_x(max(0, (term.width // 2) - 40)) + line)
 
         if 'sysop' in session.user.groups:
             spacing = 1

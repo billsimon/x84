@@ -1,7 +1,10 @@
 """ telnet client for x/84 """
+# std imports
+import codecs
+import logging
+
+#: time to block for keyboard input, polling for socket data.
 KEY_POLL = 0.015
-IS = chr(0)
-SEND = chr(1)
 
 
 def main(host, port=None, encoding='cp437'):
@@ -9,32 +12,27 @@ def main(host, port=None, encoding='cp437'):
     Call script with argument host and optional argument port to connect to a
     telnet server. ctrl-^ to disconnect.
     """
-    # pylint: disable=R0914,R0912,R0915
-    #         Too many local variables
-    #         Too many branches
-    #         Too many statements
-    import telnetlib
-    from functools import partial
-    from x84.bbs import getsession, getterminal, echo, from_cp437, telnet
-    import logging
-    log = logging.getLogger()
+    from x84.bbs import getsession, getterminal, echo
+    from x84.bbs.telnet import TelnetClient
+    log = logging.getLogger(__name__)
 
     assert encoding in ('utf8', 'cp437')
     session, term = getsession(), getterminal()
     session.activity = 'connecting to %s' % (host,)
     port = int(port) if port is not None else 23
-    telnet_client = telnetlib.Telnet()
-    telnet_client.set_option_negotiation_callback(partial(
-        telnet.callback_cmdopt, env_term=session.env['TERM'], height=term.height, width=term.width))
+    telnet_client = TelnetClient(term_type=session.env.get('TERM', 'ansi'),
+                                 height=term.height, width=term.width)
+    # cp437 bytes are always final, but utf-8 may be received mid-sequence.
+    decoder = codecs.getincrementaldecoder(
+        'cp437_art' if encoding == 'cp437' else 'utf8')(errors='replace')
+
     echo(u"\r\n\r\nEscape character is 'ctrl-^.'")
     if not session.user.get('expert', False):
         term.inkey(3)
     echo(u'\r\nTrying %s:%s... ' % (host, port,))
-    # pylint: disable=W0703
-    #         Catching too general exception Exception
     try:
         telnet_client.open(host, port)
-    except Exception as err:
+    except OSError as err:
         echo(term.bold_red('\r\n%s\r\n' % (err,)))
         echo(u'\r\n press any key ..')
         term.inkey()
@@ -47,20 +45,16 @@ def main(host, port=None, encoding='cp437'):
     carriage_returned = False
     with term.fullscreen():
         while True:
-            if encoding == 'cp437':
-                try:
-                    unistring = from_cp437(
-                        telnet_client.read_very_eager().decode('iso8859-1'))
-                except EOFError:
-                    break
-            else:
-                unistring = telnet_client.read_very_eager().decode('utf8')
-            if 0 != len(unistring):
-                echo(unistring)
+            try:
+                received = telnet_client.read_available()
+            except EOFError:
+                break
+            if received:
+                echo(decoder.decode(received))
             if inp is not None:
-                if inp == chr(30):  # ctrl-^
+                if inp == b'\x1e':  # ctrl-^
                     telnet_client.close()
-                    echo(u'\r\n' + term.clear_el + term.normal)
+                    echo(u'\r\n' + term.clear_eol + term.normal)
                     break
                 elif not carriage_returned and inp in (b'\x0d', b'\x0a'):
                     telnet_client.write(b'\x0d')
@@ -69,12 +63,16 @@ def main(host, port=None, encoding='cp437'):
                 elif carriage_returned and inp in (b'\x0a', b'\x00'):
                     carriage_returned = False
                 elif inp:
-                    telnet_client.write(inp)
+                    try:
+                        telnet_client.write(inp)
+                    except OSError:
+                        break
                     log.debug('send {!r}'.format(inp))
                     carriage_returned = False
             inp = session.read_event('input', timeout=KEY_POLL)
+    telnet_client.close()
     echo(u'\r\nConnection closed.\r\n')
-    echo(u''.join(('\r\n\r\n', term.clear_el, term.normal, 'press any key')))
+    echo(u''.join(('\r\n\r\n', term.clear_eol, term.normal, 'press any key')))
     echo(u'\x1b[r')  # unset 'set scrolling region', sometimes set by BBS's
     session.flush_event('input')
     term.inkey()

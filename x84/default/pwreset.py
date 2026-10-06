@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """ Password reset script for x/84. """
-from __future__ import division
 
+import secrets
 import string
 import random
 
@@ -12,7 +12,6 @@ from common import display_banner
 
 import logging
 import smtplib
-import base64
 import os
 from email.mime.text import MIMEText
 
@@ -142,7 +141,7 @@ def display_banner_animation(banner_text):
 
     def make_match(guess, actual):
         next_guess = guess[:]
-        indicies = range(len(actual))
+        indicies = list(range(len(actual)))
         random.shuffle(indicies)
         for idx in indicies:
             if next_guess[idx] != actual[idx]:
@@ -235,7 +234,7 @@ def matches_email(handle, email):
 def send_passkey(user):
     """ Send passkey token to user by e-mail. """
     session = getsession()
-    passkey = base64.encodestring(os.urandom(50))[:password_max_length]
+    passkey = secrets.token_urlsafe(32)[:password_max_length]
 
     email_msg = MIMEText(msg_mailbody.format(bbsname=system_bbsname,
                                              session=session,

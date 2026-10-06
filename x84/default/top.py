@@ -71,13 +71,14 @@ def get_art_detail(art_file):
     at least key and value of filename is produced, and additional
     details when ``art_file`` contains sauce records.
     """
-    parsed = SAUCE(art_file)
+    with open(art_file, 'rb') as fin:
+        parsed = SAUCE(fin)
     value = ()
     if parsed.record:
         # parse all 'sauce_records' except 'filename',
-        value = tuple((attr, getattr(parsed, attr).strip())
-                      for attr in sauce_records ^ set(['filename'])
-                      if getattr(parsed, attr).strip())
+        value = tuple((attr, (getattr(parsed, attr) or u'').strip(u'\x00 '))
+                      for attr in sorted(sauce_records ^ set(['filename']))
+                      if (getattr(parsed, attr) or u'').strip(u'\x00 '))
     # inject 'filename' in return value
     return value + (('filename', os.path.basename(art_file)),)
 
@@ -254,13 +255,12 @@ def do_intro_art(term, session):
 
 def describe_ssh_availability(term, session):
     from x84.bbs.ini import CFG
+    from x84.engine import server_enabled
     if session.kind == 'ssh':
         # what a good citizen!
         return
 
-    if not (CFG.has_section('ssh') and
-            not CFG.has_option('ssh', 'enabled')
-            or CFG.getboolean('ssh', 'enabled')):
+    if not server_enabled(CFG, 'ssh'):
         # ssh not enabled
         return
 

@@ -1,6 +1,5 @@
 """ Common interface utility functions for x/84. """
 # std imports
-from __future__ import division
 import os
 import math
 
@@ -56,7 +55,7 @@ def render_menu_entries(term, top_margin, menu_items,
                           for menu_item in menu_items]
 
     # create a parallel array of their measurable width
-    column_widths = map(measure_width, rendered_menuitems)
+    column_widths = [measure_width(item) for item in rendered_menuitems]
 
     # here, we calculate how many vertical sections of menu entries
     # may be displayed in 80 columns or less -- and forat accordingly
@@ -188,7 +187,7 @@ def prompt_pager(content, line_no=0, colors=None, width=None,
             result.append(u'')
 
     xpos = 0
-    if term.width:
+    if term.width and width:
         xpos = max(0, int((term.width / 2) - width / 2))
     for txt in result:
         line_no += 1
@@ -278,7 +277,7 @@ def show_description(term, description, color='white', width=80, **kwargs):
     xpos = max(0, (term.width // 2) - (wide // 2))
 
     lines = []
-    for line in unicode(description).splitlines():
+    for line in str(description).splitlines():
         if line.strip():
             lines.extend(term.wrap(line, wide, **kwargs))
         else:

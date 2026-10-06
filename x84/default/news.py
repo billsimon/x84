@@ -2,7 +2,6 @@
 # std
 import os
 import time
-import codecs
 import logging
 
 # local
@@ -47,7 +46,7 @@ def main(quick=False):
     session, term = getsession(), getterminal()
 
     if not os.path.exists(news_file):
-        log.warn('No news file, {0}'.format(news_file))
+        log.warning('No news file, {0}'.format(news_file))
         echo(u'\r\n\r\n' + term.center(u'No news.').rstrip() + u'\r\n')
         return
 
@@ -66,9 +65,9 @@ def main(quick=False):
     line_no = display_banner(filepattern=art_file, encoding=art_encoding)
 
     # retrieve news_file contents (decoded as utf8)
-    news = decode_pipe(codecs.open(
-        news_file, 'rb', news_file_encoding).read()
-    ).splitlines()
+    with open(news_file, 'r', encoding=news_file_encoding,
+              errors='replace') as fin:
+        news = decode_pipe(fin.read()).splitlines()
     echo(u'\r\n\r\n')
 
     # display file contents, decoded, using a command-prompt pager.

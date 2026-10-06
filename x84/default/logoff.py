@@ -7,14 +7,14 @@ def main():
     #         Too many local variables
     #         Too many branches
     from x84.bbs import DBProxy, getsession, getterminal, echo
-    from x84.bbs import ini, LineEditor, timeago, showart
+    from x84.bbs import get_ini, LineEditor, timeago, showart
     from x84.bbs import disconnect
     import time
     import os
     session, term = getsession(), getterminal()
     session.activity = 'logging off'
     handle = session.user.handle or 'anonymous'
-    max_user = ini.CFG.getint('nua', 'max_user')
+    max_user = get_ini('nua', 'max_user', getter='getint') or 10
     prompt_msg = u'[spnG]: ' if session.user.get('expert', False) else (
         u'%s:AY SOMEthiNG %s:REViOUS %s:EXt %s:Et thE fUCk Off !\b' % (
             term.bold_blue_underline(u's'),
@@ -108,10 +108,10 @@ def main():
             refresh_prompt(prompt_msg)
 
         inp = term.inkey(5)
-        if inp.lower() == 'g' or inp.code == term.KEY_EXIT:
+        if inp.lower() == 'g' or inp.code == term.KEY_ESCAPE:
             # http://www.xfree86.org/4.5.0/ctlseqs.html
             # Restore xterm icon and window title from stack.
-            echo(unichr(27) + u'[23;0t')
+            echo(u'\x1b[23;0t')
             echo(goodbye_msg)
             term.inkey(1.5)
             disconnect('logoff.')
@@ -129,10 +129,9 @@ def main():
             if msg is not None and msg.strip():
                 echo(u''.join((u'\r\n\r\n', write_msg,)))
                 autodb = DBProxy('automsg')
-                autodb.acquire()
-                idx = max([int(ixx) for ixx in autodb.keys()] or [-1]) + 1
-                autodb[idx] = (time.time(), handle, msg.strip())
-                autodb.release()
+                with autodb:
+                    idx = max([int(ixx) for ixx in autodb.keys()] or [-1]) + 1
+                    autodb['%d' % (idx,)] = (time.time(), handle, msg.strip())
                 session.send_event('global', ('automsg', True,))
                 refresh_automsg(idx)
                 echo(u''.join((u'\r\n\r\n', commit_msg,)))

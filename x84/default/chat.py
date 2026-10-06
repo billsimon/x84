@@ -1,6 +1,5 @@
 """ Chat script for x/84. """
 # std imports
-from __future__ import division
 import collections
 import logging
 import math
@@ -9,6 +8,9 @@ import math
 from x84.bbs import echo, getsession, getterminal, syncterm_setfont, showart
 from x84.bbs import ScrollingEditor, get_ini
 from x84.bbs.session import Script
+
+# 3rd-party
+from blessed.keyboard import Keystroke
 
 ChatEvent = collections.namedtuple('ChatEvent', [
     'session_id', 'channel', 'handle', 'command', 'cmd_args'])
@@ -214,12 +216,13 @@ def do_chat(session, term, log, other_sid, dial=None, call_from=None):
                 dialing = False
                 dirty = True
                 continue
-            elif isinstance(data[0], basestring):
-                bot_editors, bot_idx = recv_input(editors=bot_editors,
-                                                  edit_idx=bot_idx,
-                                                  inp=data[0])
+            elif len(data) == 3 and isinstance(data[0], str):
+                # keystroke of other party, as (text, code, name)
+                bot_editors, bot_idx = recv_input(
+                    editors=bot_editors, edit_idx=bot_idx,
+                    inp=Keystroke(data[0], code=data[1], name=data[2]))
             else:
-                log.error("Unexpected data for event 'chat': {0!r}", data)
+                log.error("Unexpected data for event 'chat': %r", data)
 
 
 def display_dialing(term, pos, who):
@@ -308,7 +311,7 @@ def do_input(term, session, editors, edit_idx, other_sid):
             return (None, None)
         editors, edit_idx = recv_input(editors, edit_idx, inp)
 
-        route_data = (other_sid, 'chat') + (inp,)
+        route_data = (other_sid, 'chat', str(inp), inp.code, inp.name)
         session.send_event('route', route_data)
 
         inp = term.inkey(0)
