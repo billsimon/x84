@@ -181,6 +181,16 @@ def init_bbs_ini():
     cfg_bbs.set('rlogin', 'addr', '127.0.0.1')
     cfg_bbs.set('rlogin', 'port', '513')
 
+    # dial-in modem callers, connected by x84-modem-bridge
+    cfg_bbs.add_section('modem')
+    cfg_bbs.set('modem', 'enabled', 'no')
+    cfg_bbs.set('modem', 'addr', '127.0.0.1')
+    cfg_bbs.set('modem', 'port', '6510')
+    cfg_bbs.set('modem', 'secret', '')
+    cfg_bbs.set('modem', 'term', 'ansi')
+    cfg_bbs.set('modem', 'encoding', 'cp437')
+    cfg_bbs.set('modem', 'art_min_rate', '2400')
+
     # web
     cfg_bbs.add_section('web')
     cfg_bbs.set('web', 'enabled', 'no')
@@ -205,6 +215,7 @@ def init_bbs_ini():
     cfg_bbs.set('matrix', 'script_telnet', 'matrix')
     cfg_bbs.set('matrix', 'script_ssh', 'matrix_ssh')
     cfg_bbs.set('matrix', 'script_sftp', 'matrix_sftp')
+    cfg_bbs.set('matrix', 'script_modem', 'matrix_modem')
     cfg_bbs.set('matrix', 'topscript', 'top')
     cfg_bbs.set('matrix', 'enable_anonymous', 'no')
     cfg_bbs.set('matrix', 'enable_pwreset', 'yes')

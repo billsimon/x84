@@ -28,6 +28,8 @@ class BaseServer(object):
     #: Default port when not configured.
     default_port = None
 
+    #: Whether connections are subject to fail2ban (see :mod:`x84.fail2ban`).
+    fail2ban = True
     def __init__(self, config):
         """
         Class initializer: bind and listen on configured address and port.

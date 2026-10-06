@@ -66,6 +66,7 @@ Documentation = "https://x84.readthedocs.io"
 
 [project.scripts]
 x84 = "x84.engine:main"
+x84-modem-bridge = "x84.modem_bridge:main"
 
 [tool.setuptools.dynamic]
 version = { attr = "x84.__version__" }

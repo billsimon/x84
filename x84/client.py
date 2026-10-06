@@ -30,6 +30,11 @@ class BaseClient(object):
     #: terminal type identifier when not yet negotiated
     TTYPE_UNDETECTED = 'unknown'
 
+    #: While at least this many bytes wait in :attr:`send_buffer`, the
+    #: engine stops reading the session's output, so that a session writing
+    #: faster than its client receives is made to wait, rather than queueing
+    #: output without limit.
+    SEND_HIGH_WATER = 256 * 1024
     def __init__(self, sock, address_pair, on_naws=None):
         """ Class initializer. """
         self.log = logging.getLogger(self.__class__.__name__)
@@ -45,8 +50,10 @@ class BaseClient(object):
         self.send_buffer = bytearray()
         self.recv_buffer = bytearray()
         # the send buffer is written by both the engine's main loop and
-        # the on-connect negotiation thread.
+        # the on-connect negotiation thread, and the receive buffer may be
+        # read by the negotiation thread while the main loop fills it.
         self._send_lock = threading.RLock()
+        self._recv_lock = threading.RLock()
         self.bytes_received = 0
         self.connect_time = time.time()
         self.last_input_time = time.time()
@@ -152,7 +159,8 @@ class BaseClient(object):
 
         self.bytes_received += recv
         self.last_input_time = time.time()
-        self.recv_buffer.extend(data)
+        with self._recv_lock:
+            self.recv_buffer.extend(data)
         return recv
 
     def get_input(self):
@@ -161,9 +169,15 @@ class BaseClient(object):
 
         Should be called conditionally when :meth:`input_ready` returns True.
         """
-        data = bytes(self.recv_buffer)
-        self.recv_buffer = bytearray()
+        with self._recv_lock:
+            data = bytes(self.recv_buffer)
+            self.recv_buffer = bytearray()
         return data
+
+    def unget_input(self, data):
+        """ Return ``data`` to the front of the receive buffer. """
+        with self._recv_lock:
+            self.recv_buffer[0:0] = data
 
     def send_str(self, bstr):
         """ Buffer bytestring for client. """

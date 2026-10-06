@@ -138,6 +138,10 @@ def get_servers(CFG):
         from x84.rlogin import RLoginServer
         servers.append(RLoginServer(config=CFG))
 
+    if server_enabled(CFG, 'modem'):
+        # start modem server instance, for x84-modem-bridge
+        from x84.modem import ModemServer
+        servers.append(ModemServer(config=CFG))
     return servers
 
 
@@ -187,7 +191,7 @@ def accept(log, server, check_ban):
             return
 
         # connecting IP is banned
-        if check_ban(address_pair[0]) is False:
+        if server.fail2ban and check_ban(address_pair[0]) is False:
             log.debug('{addr}: refused, banned.'.format(addr=address_pair[0]))
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -213,13 +217,26 @@ def accept(log, server, check_ban):
         log.error('accept error: {0}'.format(err))
 
 
+def output_blocked(client):
+    """
+    Whether the session of ``client`` must wait before writing more.
+
+    True while the client has :attr:`~x84.client.BaseClient.SEND_HIGH_WATER`
+    bytes or more waiting to be sent.  Its session's pipe is then not read,
+    so that a session writing faster than its client receives -- a modem
+    caller, most of all -- blocks, rather than queueing output without
+    limit, and the caller's keystrokes are not left waiting behind it.
+    """
+    return len(client.send_buffer) >= client.SEND_HIGH_WATER
+
+
 def get_session_output_fds(servers):
     """ Return file descriptors of all ``tty.master_read`` pipes. """
     session_fds = []
     for server in servers:
         for client in server.clients.values():
             tty = find_tty(client)
-            if tty is not None:
+            if tty is not None and not output_blocked(client):
                 try:
                     session_fds.append(tty.master_read.fileno())
                 except OSError:
@@ -346,7 +363,7 @@ def session_recv(terminals, log, tap_events):
     All data received from subprocess is handled here.
     """
     for sid, tty in terminals:
-        while tty.master_read.poll():
+        while not output_blocked(tty.client) and tty.master_read.poll():
             try:
                 event, data = tty.master_read.recv()
             except (EOFError, OSError) as err:
