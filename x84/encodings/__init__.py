@@ -1,5 +1,3 @@
-from __future__ import absolute_import
-
 import codecs
 import logging
 import re
@@ -17,44 +15,28 @@ def normalize_encoding(encoding):
 
 
 def search_function(encoding):
+    """ Codec search function for encodings provided by x/84. """
+    encoding = normalize_encoding(encoding)
+    encoding = _aliases.get(encoding, encoding)
     try:
         return _cache[encoding]
     except KeyError:
         pass
 
-    encoding = _aliases.get(encoding, encoding)
-    mod = None
-    try:
-        mod = __import__('x84.encodings.' + encoding, fromlist=['*'], level=0)
-    except ImportError:
-        pass
-
-    try:
-        getregentry = mod.getregentry
-    except AttributeError:
-        mod = None
-
-    if mod is None:
-        _cache[encoding] = None
+    if encoding not in CODECS:
         return None
 
-    _cache[encoding] = getregentry()
-
-    try:
-        codecaliases = mod.getaliases()
-    except AttributeError:
-        pass
-    else:
-        for alias in codecaliases:
-            if alias not in _aliases:
-                _aliases[alias] = _cache[encoding]
-
+    mod = __import__('x84.encodings.' + encoding, fromlist=['*'], level=0)
+    _cache[encoding] = mod.getregentry()
     return _cache[encoding]
 
 
+#: Codecs provided by x/84.
+CODECS = ('amiga', 'atarist', 'cp437_art', 'cp437')
+
+for _codec in CODECS:
+    _mod = __import__('x84.encodings.' + _codec, fromlist=['*'], level=0)
+    for _alias in getattr(_mod, 'getaliases', lambda: ())():
+        _aliases.setdefault(normalize_encoding(_alias), _codec)
+
 codecs.register(search_function)
-
-
-# Now to initialize all locally available codecs:
-for encoding in ('amiga', 'atarist', 'cp437_art', 'cp437'):
-    ''.decode(encoding)
