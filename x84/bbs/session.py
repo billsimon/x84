@@ -2,12 +2,13 @@
 """ Session engine for x/84. """
 
 # std imports
+import importlib.machinery
+import importlib.util
 import collections
 import traceback
 import logging
 import pickle
 import time
-import imp
 import sys
 import os
 
@@ -78,7 +79,6 @@ class Session(object):
     _decoder = None
     _activity = None
     _user = None
-    _script_module = []
 
     def __init__(self, terminal, sid, env, child_pipes, kind, addrport,
                  matrix_args, matrix_kwargs):
@@ -136,6 +136,7 @@ class Session(object):
         self._connect_time = time.time()
         self._last_input_time = time.time()
         self._node = None
+        self._script_module = []
 
         # create event buffer
         self._buffer = dict()
@@ -203,8 +204,7 @@ class Session(object):
             self.log.debug('activity=%s', value)
             self._activity = value
 
-            if (self.terminal.kind.startswith('xterm') or
-                    self.terminal.kind.startswith('rxvt')):
+            if (self.terminal.kind or '').startswith(('xterm', 'rxvt')):
                 self.write(u'\x1b]2;{0}\x07'.format(value))
 
     @property
@@ -258,10 +258,12 @@ class Session(object):
     def script_path(self):
         """
         Base filepath folder for all scripts.
-        
+
         :rtype: list
         """
-        scriptpath_dirs = get_ini('system', 'scriptpath', split=True)
+        scriptpath_dirs = [
+            os.path.expanduser(directory) for directory in
+            get_ini('system', 'scriptpath', split=True)]
 
         # ensure all specified folders exist
         for directory in scriptpath_dirs:
@@ -273,7 +275,6 @@ class Session(object):
     @property
     def current_script(self):
         """ The current script being executed. """
-        self.value = 1
         if len(self._script_stack):
             return self._script_stack[-1]
         return None
@@ -283,10 +284,13 @@ class Session(object):
         """
         Base python module instance for userland scripts.
 
+        Each folder of the ``scriptpath`` configuration value is placed into
+        :data:`sys.path`, so that scripts may import their sibling modules,
+        and its ``__init__.py`` is loaded as a module of the folder's name.
+
         :rtype: list
         """
         if not self._script_module:
-
             for directory in self.script_path:
                 # load default/__init__.py as 'default',
                 folder_name = os.path.basename(directory)
@@ -295,10 +299,11 @@ class Session(object):
                 if directory not in sys.path:
                     sys.path.insert(0, directory)
 
-                # discover import path to __init__.py, store result
-                lookup = imp.find_module('__init__', [directory])
-                scr_module = imp.load_module(folder_name, *lookup)
-                scr_module.__path__ = directory
+                spec = importlib.util.spec_from_file_location(
+                    folder_name, os.path.join(directory, '__init__.py'),
+                    submodule_search_locations=[directory])
+                scr_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(scr_module)
                 self._script_module.append(scr_module)
         return self._script_module
 
@@ -372,7 +377,7 @@ class Session(object):
                     self.log.info('Disconnected: %s', err)
                     return None
 
-                except Exception as err:
+                except Exception:
                     # Pokemon exception, log and Cc: client, then resume.
                     e_type, e_value, e_tb = sys.exc_info()
                     if self.show_traceback:
@@ -437,7 +442,8 @@ class Session(object):
 
         - ``global``: events where the first index of ``data`` is ``AYT``.
           This is sent by other sessions using the ``broadcast`` event, to
-          discover "who is online".
+          discover "who is online".  All other ``global`` events are buffered
+          as an event named by the first index of ``data``.
 
         - ``info-req``: Where the first data value is the remote session-id
           that requested it, expecting a return value event of ``info-ack``
@@ -464,6 +470,14 @@ class Session(object):
                 self.sid, self.user.handle,))
             return True
 
+        # all other global broadcasts, such as ('newmsg', msg_idx), are
+        # buffered as an event of the name of its first value, ('newmsg'),
+        # with data of its remaining value(s) (msg_idx).
+        is_broadcast = False
+        if event == 'global':
+            is_broadcast = True
+            event, data = data[0], (data[1] if len(data) == 2 else data[1:])
+
         # accept 'gosub' as a literal command to run a new script directly
         # from this buffer_event method.  I'm sure it's fine ...
         if event == 'gosub':
@@ -483,7 +497,7 @@ class Session(object):
                 # Otherwise, it is fine to not require the calling function to
                 # refresh -- so long as the target script makes sure(!) to
                 # use the "with term.fullscreen()" context manager.
-                data = ('resize', (self.terminal.height, self.terminal.width,))
+                data = ('resize', (self.terminal.width, self.terminal.height,))
                 self.buffer_event('refresh', data)
             return True
 
@@ -501,9 +515,9 @@ class Session(object):
             # shorter queue length is used. only the foremost refresh event is
             # important in the case of screen resize.
             self._buffer[event] = collections.deque(
-                maxlen={'global': 128,
-                        'refresh': 1,
-                        }.get(event, 65534))
+                maxlen=128 if is_broadcast else {
+                    'refresh': 1,
+                }.get(event, 65534))
 
         # buffer input
         if event == 'input':
@@ -546,10 +560,13 @@ class Session(object):
             # input buffer.  It wouldn't be bad to do this on __init__,
             # either.
             self._buffer['input'] = collections.deque(maxlen=65534)
+        # like all other event buffers, data is popped from the right-hand
+        # side of the deque: new data is queued at the left, and data that
+        # is "pushed back" is placed at the right, to be received next.
         if pushback:
-            self._buffer['input'].appendleft(data)
-        else:
             self._buffer['input'].append(data)
+        else:
+            self._buffer['input'].appendleft(data)
 
     def send_event(self, event, data):
         """
@@ -575,8 +592,12 @@ class Session(object):
 
         :param str event: event name.
         :param data: event data.
+        :raises Disconnected: the engine has closed the IPC pipe.
         """
-        self.writer.send((event, data))
+        try:
+            self.writer.send((event, data))
+        except (BrokenPipeError, EOFError, ConnectionResetError) as err:
+            raise Disconnected('IPC pipe closed: {0}'.format(err))
 
     def poll_event(self, event):
         """
@@ -619,6 +640,14 @@ class Session(object):
         if event:
             return (event, data)
 
+        if timeout is not None and timeout <= 0:
+            # non-blocking: receive all events immediately available.
+            while self._recv_event(timeout=0):
+                event, data = self._pop_event_buffer(events)
+                if event is not None:
+                    return (event, data)
+            return (None, None)
+
         timeleft = lambda cmp_time: (
             None if timeout is None else
             timeout if timeout < 0 else
@@ -629,28 +658,39 @@ class Session(object):
         waitfor = timeleft(stime)
         while waitfor is None or waitfor > 0:
             # ask engine process for new event data,
-            poll = min(0.5, waitfor) or 0.01
-            if self.reader.poll(poll):
-                try:
-                    event, data = self.reader.recv()
-                except pickle.UnpicklingError as err:
-                    self.log.error(err)
-                    disconnect(reason='{0}'.format(err))
-                # it is necessary to always buffer an event, as some
-                # side-effects may occur by doing so.  When buffer_event
-                # returns True, those side-effects caused no data to be
-                # buffered, and one should not try to return any data for it.
-                if not self.buffer_event(event, data):
-                    if event in events:
-                        return event, self._buffer[event].pop()
-            else:
-                event, data = self._pop_event_buffer(events)
-                if event is not None:
-                    return (event, data)
-                elif timeout == -1:
-                    return (None, None)
+            poll = min(0.5, waitfor) if waitfor is not None else 0.5
+            self._recv_event(timeout=poll)
+            # an event handled by buffer_event() may have side-effects, such
+            # as an event-driven 'gosub', which may itself buffer events.
+            event, data = self._pop_event_buffer(events)
+            if event is not None:
+                return (event, data)
             waitfor = timeleft(stime)
         return (None, None)
+
+    def _recv_event(self, timeout):
+        """
+        Receive and buffer one event from the engine, up to ``timeout``.
+
+        It is necessary to always buffer an event, as some side-effects may
+        occur by doing so (see :meth:`buffer_event`).
+
+        :rtype: bool
+        :returns: whether an event was received.
+        :raises Disconnected: the engine has closed the IPC pipe.
+        """
+        try:
+            if not self.reader.poll(timeout):
+                return False
+            event, data = self.reader.recv()
+        except pickle.UnpicklingError as err:
+            self.log.error(err)
+            disconnect(reason='{0}'.format(err))
+        except (EOFError, OSError) as err:
+            # the engine has closed our pipe, the client is gone.
+            disconnect(reason='IPC pipe closed: {0}'.format(err))
+        self.buffer_event(event, data)
+        return True
 
     def _pop_event_buffer(self, events):
         """
@@ -677,7 +717,8 @@ class Session(object):
         # if given a script name such as 'extras.target', adjust the lookup
         # path to be extended by {default_scriptdir}/extras, and adjust
         # script_name to be just 'target'.
-        script_relpath = [ directory.__path__ for directory in self.script_module ]
+        script_relpath = [directory.__path__[0]
+                          for directory in self.script_module]
         lookup_paths = script_relpath[:]
 
         if '.' not in script.name:
@@ -688,8 +729,7 @@ class Session(object):
             for dir_relpath in script_relpath:
                 _lookup_path = os.path.join(dir_relpath, *remaining.split('.'))
                 lookup_paths.append(_lookup_path)
-        lookup = imp.find_module(script_name, lookup_paths)
-        module = imp.load_module(script_name, *lookup)
+        module = self._load_script(script_name, lookup_paths)
 
         # ensure main() function exists!
         if not hasattr(module, 'main'):
@@ -710,9 +750,41 @@ class Session(object):
 
         return value
 
+    @staticmethod
+    def _load_script(script_name, lookup_paths):
+        """
+        Load and return a fresh module instance of script by name.
+
+        Scripts are (re-)loaded from source on each call, so that changes
+        made to scripts take effect without restarting the server, and so
+        that any module-level configuration values are re-evaluated.
+
+        :raises ImportError: script was not found.
+        """
+        spec = importlib.machinery.PathFinder.find_spec(
+            script_name, lookup_paths)
+        if spec is None:
+            raise ImportError('script {0!r} not found in {1!r}'.format(
+                script_name, lookup_paths), name=script_name)
+        module = importlib.util.module_from_spec(spec)
+        # registered in sys.modules, just as an import statement does, so
+        # that the script's own import statements of it (such as profile.py
+        # importing nua.py) find this same instance.
+        sys.modules[script_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(script_name, None)
+            raise
+        return module
+
     def close(self):
         """ Close session, currently releases ``node`` lock.. """
         if self._node is not None:
-            self.send_event(
-                event='lock-node/%d' % (self._node),
-                data=('release', None))
+            try:
+                self.send_event(
+                    event='lock-node/%d' % (self._node),
+                    data=('release', None))
+            except (BrokenPipeError, EOFError, OSError):
+                # engine has already closed our pipe.
+                pass

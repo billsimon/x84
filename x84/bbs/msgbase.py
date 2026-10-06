@@ -78,7 +78,7 @@ def list_privmsgs(handle=None):
 
 def list_tags():
     """ Return set of available tags. """
-    return [_tag.decode('utf8') for _tag in DBProxy(TAGDB).keys()]
+    return list(DBProxy(TAGDB).keys())
 
 
 class Msg(object):
@@ -152,7 +152,7 @@ class Msg(object):
         # persist message record to MSGDB
         with DBProxy(MSGDB, use_session=use_session) as db_msg:
             if new:
-                self.idx = max(map(int, db_msg.keys()) or [-1]) + 1
+                self.idx = max([int(key) for key in db_msg.keys()] or [-1]) + 1
                 if ctime is not None:
                     self._ctime = self._stime = ctime
                 else:
@@ -184,7 +184,7 @@ class Msg(object):
             try:
                 parent_msg = get_msg(self.parent)
             except KeyError:
-                log.warn('Child message {0}.parent = {1}: '
+                log.warning('Child message {0}.parent = {1}: '
                          'parent does not exist!'.format(self.idx, self.parent))
             else:
                 if self.idx != parent_msg.idx:
@@ -193,7 +193,7 @@ class Msg(object):
                 else:
                     log.error('Parent idx same as message idx; stripping')
                     self.parent = None
-                    with db_msg:
+                    with DBProxy(MSGDB, use_session=use_session) as db_msg:
                         db_msg['%d' % (self.idx)] = self
 
         # persist message record to PRIVDB
@@ -231,10 +231,10 @@ class Msg(object):
             # server networks offered by this server,
             # message is for a network we host
             if tag in get_ini(section='msg', key='server_tags', split=True):
+                self.body = u''.join((self.body, format_origin_line()))
+                self.save(send_net=False)
                 with DBProxy('{0}trans'.format(tag)) as transdb:
-                    self.body = u''.join((self.body, format_origin_line()))
-                    self.save()
-                    transdb[self.idx] = self.idx
+                    transdb[str(self.idx)] = self.idx
                 log.info('[{tag}] Stored for network (msgid {self.idx}).'
                          .format(tag=tag, self=self))
 
@@ -242,6 +242,6 @@ class Msg(object):
             # message is for a another network, queue for delivery
             elif tag in get_ini(section='msg', key='network_tags', split=True):
                 with DBProxy('{0}queues'.format(tag)) as queuedb:
-                    queuedb[self.idx] = tag
+                    queuedb[str(self.idx)] = tag
                 log.info('[{tag}] Message (msgid {self.idx}) queued '
                          'for delivery'.format(tag=tag, self=self))

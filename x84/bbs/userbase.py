@@ -1,6 +1,8 @@
 """ Userbase record database and utility functions for x/84. """
 import logging
+import hmac
 from x84.bbs.dbproxy import DBProxy
+from x84.bbs.ini import get_ini
 
 FN_PASSWORD_DIGEST = None
 GROUPDB = 'groupbase'
@@ -14,8 +16,7 @@ def list_users():
     :rtype: list
     :returns list of user handles.
     """
-    return [handle.decode('utf8')
-            for handle in DBProxy(USERDB).keys()]
+    return list(DBProxy(USERDB).keys())
 
 
 def get_user(handle):
@@ -36,7 +37,7 @@ def find_user(handle):
     :rtype: None or str.
     """
     for key in DBProxy(USERDB).keys():
-        if handle.lower() == key.decode('utf8').lower():
+        if handle.lower() == key.lower():
             return key
 
 
@@ -136,8 +137,7 @@ class User(object):
         # pylint: disable=C0111
         #         Missing docstring
         log = logging.getLogger(__name__)
-        from x84.bbs import ini
-        if ini.CFG.getboolean('system', 'pass_ucase'):
+        if get_ini('system', 'pass_ucase', getter='getboolean'):
             # facebook and mystic storage style, i wouldn't
             # recommend it though.
             self._password = get_digestpw()(value.upper())
@@ -152,15 +152,19 @@ class User(object):
         :rtype: bool
         :returns: whether the password is correct.
         """
-        from x84.bbs import ini
-        pass_ucase = ini.CFG.getboolean('system', 'pass_ucase')
-        assert isinstance(try_pass, unicode)
+        pass_ucase = get_ini('system', 'pass_ucase', getter='getboolean')
+        assert isinstance(try_pass, str)
         assert len(try_pass) > 0
         assert self.password != (None, None), ('account is without password')
-        salt = self.password[0]
+        salt, digest = (_as_str(value) for value in self.password)
         digestpw = get_digestpw()
-        return (self.password == digestpw(try_pass, salt) or pass_ucase
-                and self.password == digestpw(try_pass.upper(), salt))
+        candidates = [try_pass]
+        if pass_ucase:
+            candidates.append(try_pass.upper())
+        return any(hmac.compare_digest(
+            digest.encode('utf8'),
+            _as_str(digestpw(candidate, salt)[1]).encode('utf8'))
+            for candidate in candidates)
 
     def __setitem__(self, key, value):
         # pylint: disable=C0111,
@@ -185,24 +189,24 @@ class User(object):
     def get(self, key, default=None):
         # pylint: disable=C0111,
         #        Missing docstring
-        from x84.bbs import ini
         log = logging.getLogger(__name__)
         adb = DBProxy(USERDB, 'attrs')
+        tap_db = get_ini('session', 'tap_db', getter='getboolean')
 
-        if self.handle not in adb:
-            if ini.CFG.getboolean('session', 'tap_db'):
+        attrs = adb.get(self.handle, None)
+        if attrs is None:
+            if tap_db:
                 log.debug('User({!r}).get(key={!r}) returns default={!r}'
                           .format(self.handle, key, default))
             return default
 
-        attrs = adb.get(self.handle, {})
         if key not in attrs:
-            if ini.CFG.getboolean('session', 'tap_db'):
+            if tap_db:
                 log.debug('User({!r}.get(key={!r}) returns default={!r}'
                           .format(self.handle, key, default))
             return default
 
-        if ini.CFG.getboolean('session', 'tap_db'):
+        if tap_db:
             log.debug('User({!r}.get(key={!r}) returns value.'
                       .format(self.handle, key))
         return attrs[key]
@@ -246,14 +250,14 @@ class User(object):
     def save(self):
         """ Save user record to database. """
         log = logging.getLogger(__name__)
-        assert isinstance(self._handle, unicode), ('handle must be unicode')
+        assert isinstance(self._handle, str), ('handle must be str')
         assert len(self._handle) > 0, ('handle must be non-zero length')
         assert (None, None) != self._password, ('password must be set')
         assert self._handle != u'anonymous', ('anonymous may not be saved.')
         udb = DBProxy(USERDB)
         with udb:
             if 0 == len(udb) and self.is_sysop is False:
-                log.warn('{!r}: First new user becomes sysop.'
+                log.warning('{!r}: First new user becomes sysop.'
                          .format(self.handle))
                 self.group_add(u'sysop')
             is_new = self.handle not in udb
@@ -272,13 +276,17 @@ class User(object):
         gdb = DBProxy(GROUPDB)
         with gdb:
             for gname in self._groups:
-                group = gdb[gname]
-                if self.handle in group.members:
+                group = gdb.get(gname, None)
+                if group is not None and self.handle in group.members:
                     group.remove(self.handle)
                     group.save()
         udb = DBProxy(USERDB)
         with udb:
             del udb[self.handle]
+        adb = DBProxy(USERDB, 'attrs')
+        with adb:
+            if self.handle in adb:
+                del adb[self.handle]
         log.info("deleted user '%s'.", self.handle)
 
     @property
@@ -351,14 +359,32 @@ class User(object):
                     group.save()
 
 
+def _as_str(value):
+    """
+    Return ``value`` as str.
+
+    Password salts and digests are stored as str, but those of databases
+    written by x/84 v2 (python 2) may be bytes.
+    """
+    if isinstance(value, bytes):
+        return value.decode('latin-1')
+    return value
+
+
 def _digestpw_bcrypt(password, salt=None):
-    """ Password digest using bcrypt (optional-preferred). """
+    """ Password digest using bcrypt (preferred). """
     import bcrypt
     if not salt:
         salt = bcrypt.gensalt()
-    if isinstance(password, unicode):
+    if isinstance(salt, str):
+        salt = salt.encode('ascii')
+    if isinstance(password, str):
         password = password.encode('utf8')
-    return salt, bcrypt.hashpw(password, salt)
+    # bcrypt only considers the first 72 bytes of a password, and recent
+    # versions of the bcrypt library raise ValueError for any longer.
+    password = password[:72]
+    return (salt.decode('ascii'),
+            bcrypt.hashpw(password, salt).decode('ascii'))
 
 
 def _digestpw_internal(password, salt=None):
@@ -367,12 +393,12 @@ def _digestpw_internal(password, salt=None):
     import base64
     import os
     if not salt:
-        salt = base64.b64encode(os.urandom(32))
+        salt = base64.b64encode(os.urandom(32)).decode('ascii')
     digest = salt + password
     for _ in range(0, 100000):
         # pylint: disable=E1101
         #         Module 'hashlib' has no 'sha256'
-        digest = hashlib.sha256(digest).hexdigest()
+        digest = hashlib.sha256(digest.encode('utf8')).hexdigest()
     return salt, digest
 
 
@@ -389,12 +415,17 @@ def get_digestpw():
     if FN_PASSWORD_DIGEST is not None:
         return FN_PASSWORD_DIGEST
 
-    from x84.bbs.ini import get_ini
-    FN_PASSWORD_DIGEST = {
-        'bcrypt': _digestpw_bcrypt,
-        'internal': _digestpw_internal,
-        'plaintext': _digestpw_plaintext,
-    }.get(get_ini('system', 'password_digest'))
+    digest_name = get_ini('system', 'password_digest') or 'bcrypt'
+    try:
+        FN_PASSWORD_DIGEST = {
+            'bcrypt': _digestpw_bcrypt,
+            'internal': _digestpw_internal,
+            'plaintext': _digestpw_plaintext,
+        }[digest_name]
+    except KeyError:
+        raise ValueError('configuration section [system], value '
+                         'password_digest: must be one of bcrypt, internal, '
+                         'or plaintext, not {0!r}'.format(digest_name))
     return FN_PASSWORD_DIGEST
 
 
@@ -437,39 +468,45 @@ def check_user_password(username, password):
     if handle is None:
         return False
     user = get_user(handle)
-    if user is None:
+    if user is None or user.password == (None, None):
         return False
-    return password and user.auth(password)
+    return bool(password) and user.auth(password)
 
 
 def parse_public_key(user_pubkey):
-    """ Return paramiko key class instance of a user's public key text. """
+    """
+    Return paramiko key class instance of a user's public key text.
+
+    The text is in the format of an OpenSSH ``authorized_keys`` entry, such
+    as ``ssh-ed25519 AAAAC3Nz... user@host``.  Any key type supported by
+    paramiko (rsa, ecdsa, ed25519) may be used.
+
+    :raises ValueError: public key text is malformed or unsupported.
+    """
+    import binascii
+    import base64
     import paramiko
 
-    if len(user_pubkey.split()) == 3:
-        key_msg, key_data, _ = user_pubkey.split()
-    elif len(user_pubkey.split()) == 2:
-        key_msg, key_data = user_pubkey.split()
-    elif len(user_pubkey.split()) == 1:
+    parts = user_pubkey.split()
+    if len(parts) >= 2:
+        key_msg, key_data = parts[0], parts[1]
+    elif len(parts) == 1:
         # when no key-type is specified, assume rsa
-        key_msg, key_data = 'ssh-rsa', user_pubkey
+        key_msg, key_data = 'ssh-rsa', parts[0]
     else:
         raise ValueError('Malformed public key format: {0!r}'
                          .format(user_pubkey))
     try:
-        key_bytes = key_data.decode('ascii')
-    except UnicodeDecodeError:
+        decoded_keybytes = base64.b64decode(key_data, validate=True)
+    except (binascii.Error, ValueError):
         raise ValueError('Malformed public key encoding: {0!r}'
                          .format(key_data))
-    decoded_keybytes = paramiko.py3compat.decodebytes(key_bytes)
     try:
-        return {'ssh-rsa': paramiko.RSAKey,
-                'ssh-dss': paramiko.DSSKey,
-                'ecdsa-sha2-nistp256': paramiko.ECDSAKey,
-                }.get(key_msg)(data=decoded_keybytes)
-    except KeyError:
-        raise ValueError('Malformed public key_msg: {0!r}'
-                         .format(key_msg))
+        return paramiko.PKey.from_type_string(key_msg, decoded_keybytes)
+    except (paramiko.SSHException, paramiko.pkey.UnknownKeyType,
+            ValueError, TypeError) as err:
+        raise ValueError('Malformed or unsupported public key {0!r}: {1}'
+                         .format(key_msg, err))
 
 
 def check_user_pubkey(username, public_key):
@@ -487,10 +524,8 @@ def check_user_pubkey(username, public_key):
         return False
     try:
         stored_pubkey = parse_public_key(user_pubkey)
-    except (ValueError, Exception):
-        import sys
-        (exc_type, exc_value, _) = sys.exc_info()
-        log.debug('{0} for stored public key of user {1!r}: '
-                  '{2}'.format(exc_type, username, exc_value))
-    else:
-        return stored_pubkey == public_key
+    except ValueError as err:
+        log.debug('{0} for stored public key of user {1!r}'
+                  .format(err, username))
+        return False
+    return stored_pubkey == public_key

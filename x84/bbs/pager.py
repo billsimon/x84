@@ -1,18 +1,19 @@
 """ Pager package for x/84. """
+import copy
 from x84.bbs.ansiwin import AnsiWindow
 from x84.bbs.output import encode_pipe, decode_pipe
 from x84.bbs.session import getterminal
 from x84.bbs.output import echo
 
 VI_KEYSET = {
-    'refresh': [unichr(12), ],
+    'refresh': [chr(12), ],
     'home': [u'0'],
     'end': [u'G'],
     'up': [u'k', u'K'],
     'down': [u'j', u'J', u'\r'],
-    'pgup': [u'b', u'B', u''],
-    'pgdown': [u'f', u'F', u''],
-    'exit': [u'q', u'Q', unichr(27), ],
+    'pgup': [u'b', u'B', u'\x02'],
+    'pgdown': [u'f', u'F', u'\x06'],
+    'exit': [u'q', u'Q', chr(27), ],
 }
 
 
@@ -34,7 +35,8 @@ class Pager(AnsiWindow):
         :param dict keyset: command keys, global ``VI_KEYSET`` is default.
         """
         self._quit = False
-        self.init_keystrokes(keyset=kwargs.pop('keyset', VI_KEYSET.copy()))
+        self.init_keystrokes(
+            keyset=copy.deepcopy(kwargs.pop('keyset', VI_KEYSET)))
         _content = kwargs.pop('content', u'') or u''
         AnsiWindow.__init__(self, *args, **kwargs)
         self.content = _content
@@ -93,7 +95,7 @@ class Pager(AnsiWindow):
     @property
     def bottom(self):
         """ Bottom-most position that contains content. """
-        maximum = self.visible_height
+        maximum = len(getattr(self, '_content', ()))
         return max(0, maximum - self.visible_height)
 
     def process_keystroke(self, keystroke):

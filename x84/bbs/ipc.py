@@ -15,8 +15,11 @@ def make_root_logger(out_queue):
     queue.
     """
     root = logging.getLogger()
-    map(root.removeHandler, root.handlers)
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
     root.addHandler(IPCLogHandler(out_queue=out_queue))
+    # the engine's log handlers filter by level; forward everything.
+    root.setLevel(logging.DEBUG)
 
 
 class IPCLogHandler(logging.Handler):
@@ -37,12 +40,14 @@ class IPCLogHandler(logging.Handler):
     def emit(self, record):
         """ Emit log record via IPC output queue. """
         try:
-            e_inf = record.exc_info
-            if e_inf:
-                # a strange side-effect,
-                # sets record.exc_text
-                dummy = self.format(record)  # NOQA
+            if record.exc_info:
+                # a strange side-effect, sets record.exc_text, which is
+                # pickled, whereas a traceback object cannot be.
+                self.format(record)
                 record.exc_info = None
+            # arguments are formatted here: they may not be pickleable.
+            record.msg = record.getMessage()
+            record.args = None
             record.handle = None
             session = getsession()
             if session:
@@ -50,6 +55,9 @@ class IPCLogHandler(logging.Handler):
             self.oqueue.send(('logger', record))
         except (KeyboardInterrupt, SystemExit):
             raise
+        except (BrokenPipeError, EOFError):
+            # engine has closed our pipe, there is nobody to log to.
+            pass
         except Exception:
             self.handleError(record)
 
@@ -69,6 +77,9 @@ class IPCStream(object):
         self.writer = writer
         self.is_a_tty = True
 
+    def flush(self):
+        """ Flush stream (does nothing, writes are not buffered). """
+
     def write(self, ucs, encoding='ascii'):
         """
         Sends unicode text to Pipe.
@@ -78,10 +89,10 @@ class IPCStream(object):
         (context managers, such as "with term.location(0, 0):" have
         such side effects).
         """
-        # wrap 'ucs' with call to 'unicode()', so that special unicode
+        # wrap 'ucs' with call to 'str()', so that special str
         # instances such as blessed.formatters.ParameterizingProxyString
         # can be pickled -- as this one in particular contains a local
         # function (lambda) as an attribute -- which would fail:
         # PicklingError: Can't pickle <type 'function'>: attribute
-        #                lookup __builtin__.function failed
-        self.writer.send(('output', (unicode(ucs), encoding)))
+        #                lookup builtins.function failed
+        self.writer.send(('output', (str.__str__(ucs), encoding)))

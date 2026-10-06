@@ -1,13 +1,15 @@
 """ Left/Right lightbar choice selector for x/84. """
+import copy
+
 from x84.bbs.ansiwin import AnsiWindow
 
 VI_KEYSET = {
-    'refresh': [unichr(12)],
+    'refresh': [chr(12)],
     'toggle': [u' '],
     'left': [u'h'],
     'right': [u'l'],
     'enter': [u'\r'],
-    'exit': [u'q', u'Q', unichr(27), ],
+    'exit': [u'q', u'Q', chr(27), ],
 }
 
 
@@ -43,7 +45,8 @@ class Selector(AnsiWindow):
         self._quit = False
         self._selected = False
 
-        self.init_keystrokes(keyset=kwargs.pop('keyset', VI_KEYSET.copy()))
+        self.init_keystrokes(
+            keyset=copy.deepcopy(kwargs.pop('keyset', VI_KEYSET)))
 
         AnsiWindow.__init__(self, height=1, width=width,
                             yloc=yloc, xloc=xloc, **kwargs)

@@ -1,6 +1,7 @@
 """ Database proxy helper for x/84. """
 # std imports
 import logging
+import time
 
 # local
 from x84.bbs.ini import get_ini
@@ -8,9 +9,15 @@ from x84.db import (
     get_db_filepath,
     get_database,
     get_db_func,
-    get_db_lock,
+    get_db_lock_key,
     log_db_cmd,
+    thread_holder,
+    thread_holder_alive,
+    LOCKS,
 )
+
+#: time to wait before retrying to acquire a lock held by another.
+LOCK_RETRY_INTERVAL = 0.05
 
 
 class DBProxy(object):
@@ -39,7 +46,7 @@ class DBProxy(object):
         self.log = logging.getLogger(__name__)
         self.schema = schema
         self.table = table
-        self._tap_db = get_ini('session', 'tab_db', getter='getboolean')
+        self._tap_db = get_ini('session', 'tap_db', getter='getboolean')
 
         from x84.bbs.session import getsession
         self._session = use_session and getsession()
@@ -62,20 +69,17 @@ class DBProxy(object):
         """ Proxy for direct dictionary method calls. """
         dictdb = get_database(filepath=get_db_filepath(self.schema),
                               table=self.table)
-        try:
-            func = get_db_func(dictdb, method)
-            if self._tap_db:
-                log_db_cmd(self.log, self.schema, method, args)
-            return func(*args)
-        finally:
-            dictdb.close()
+        func = get_db_func(dictdb, method)
+        if self._tap_db:
+            log_db_cmd(self.log, self.schema, method, args)
+        return func(*args)
 
     def proxy_iter(self, method, *args):
         """ Proxy for iterable dictionary method calls. """
         if self._session:
             return self.proxy_iter_session(method, *args)
 
-        return self.proxy_method_direct(method, *args)
+        return iter(self.proxy_method_direct(method, *args))
 
     def proxy_method(self, method, *args):
         """ Proxy for dictionary method calls. """
@@ -91,20 +95,37 @@ class DBProxy(object):
         return self._session.read_event(event)
 
     def acquire(self):
-        """ Acquire system-wide lock on database. """
-        lock = get_db_lock(schema=self.schema, table=self.table)
+        """
+        Acquire system-wide lock on database (blocking).
+
+        Locks are held by the engine process, so that they are shared by all
+        sessions and engine threads (such as the message network poller).
+        """
+        key = get_db_lock_key(self.schema, self.table)
         if self._tap_db:
             self.log.debug('lock acquire schema=%s, table=%s',
                            self.schema, self.table)
-        lock.acquire()
+        while True:
+            if self._session:
+                self._session.send_event(key, ('acquire', None))
+                acquired = self._session.read_event(key)
+            else:
+                acquired, _, _ = LOCKS.acquire(
+                    key, thread_holder(), is_alive=thread_holder_alive)
+            if acquired:
+                return
+            time.sleep(LOCK_RETRY_INTERVAL)
 
     def release(self):
         """ Release system-wide lock on database. """
-        lock = get_db_lock(schema=self.schema, table=self.table)
+        key = get_db_lock_key(self.schema, self.table)
         if self._tap_db:
             self.log.debug('lock release schema=%s, table=%s',
                            self.schema, self.table)
-        lock.release()
+        if self._session:
+            self._session.send_event(key, ('release', None))
+        else:
+            LOCKS.release(key, thread_holder())
 
     def __enter__(self):
         self.acquire()
@@ -136,8 +157,8 @@ class DBProxy(object):
     get.__doc__ = dict.get.__doc__
 
     def has_key(self, key):
-        return self.proxy_method('has_key', key)
-    has_key.__doc__ = dict.has_key.__doc__
+        """ Deprecated form of ``key in database``. """
+        return self.proxy_method('__contains__', key)
 
     def setdefault(self, key, value):
         return self.proxy_method('setdefault', key, value)
@@ -160,23 +181,26 @@ class DBProxy(object):
     items.__doc__ = dict.items.__doc__
 
     def iteritems(self):
+        """ Return iterator of database (key, value) pairs. """
         return self.proxy_iter('iteritems')
-    iteritems.__doc__ = dict.iteritems.__doc__
 
     def iterkeys(self):
+        """ Return iterator of database keys. """
         return self.proxy_iter('iterkeys')
-    iterkeys.__doc__ = dict.iterkeys.__doc__
 
     def itervalues(self):
+        """ Return iterator of database values. """
         return self.proxy_iter('itervalues')
-    itervalues.__doc__ = dict.itervalues.__doc__
+
+    def __iter__(self):
+        return iter(self.keys())
 
     def keys(self):
         return self.proxy_method('keys')
     keys.__doc__ = dict.keys.__doc__
 
-    def pop(self):
-        return self.proxy_method('pop')
+    def pop(self, key, *default):
+        return self.proxy_method('pop', key, *default)
     pop.__doc__ = dict.pop.__doc__
 
     def popitem(self):

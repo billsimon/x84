@@ -1,8 +1,7 @@
 """ Configuration package x/84. """
 # std imports
-from __future__ import print_function
 import logging.config
-import ConfigParser
+import configparser
 import warnings
 import inspect
 import getpass
@@ -35,7 +34,8 @@ def init(lookup_bbs, lookup_log):
             print('Creating folder {0}'.format(dir_name))
             os.mkdir(dir_name)
         print('Saving {0}'.format(filepath))
-        cfg.write(open(os.path.expanduser(filepath), 'w'))
+        with open(os.path.expanduser(filepath), 'w') as fout:
+            cfg.write(fout)
 
     # exploit last argument, presumed to be within a folder
     # writable by our process, and where the ini is wanted
@@ -46,27 +46,28 @@ def init(lookup_bbs, lookup_log):
         cfg_logfile = os.path.expanduser(cfg_logfile)
         # load-only defaults,
         if os.path.exists(cfg_logfile):
-            print('loading {0}'.format((cfg_logfile)))
-            logging.config.fileConfig(cfg_logfile)
+            print('loading {0}'.format(cfg_logfile), flush=True)
+            logging.config.fileConfig(cfg_logfile,
+                                      disable_existing_loggers=False)
             loaded = True
             break
     if not loaded:
-        cfg_log = init_log_ini()
         dir_name = os.path.dirname(cfg_logfile)
+        cfg_log = init_log_ini(log_folder=dir_name)
         if not os.path.isdir(dir_name):
             try:
                 os.makedirs(dir_name)
             except OSError as err:
-                log.warn(err)
+                log.warning(err)
         try:
             write_cfg(cfg_log, cfg_logfile)
             log.info('Saved %s', cfg_logfile)
         except IOError as err:
             log.error(err)
-        logging.config.fileConfig(cfg_logfile)
+        logging.config.fileConfig(cfg_logfile, disable_existing_loggers=False)
 
     loaded = False
-    cfg_bbs = ConfigParser.SafeConfigParser()
+    cfg_bbs = configparser.ConfigParser()
     cfg_bbsfile = lookup_bbs[-1]
     for cfg_bbsfile in lookup_bbs:
         cfg_bbsfile = os.path.expanduser(cfg_bbsfile)
@@ -83,7 +84,7 @@ def init(lookup_bbs, lookup_log):
             try:
                 os.makedirs(dir_name)
             except OSError as err:
-                log.warn(err)
+                log.warning(err)
         try:
             write_cfg(cfg_bbs, cfg_bbsfile)
             log.info('Saved %s', cfg_bbsfile)
@@ -108,7 +109,7 @@ def init_bbs_ini():
     # ### where it is used.
     # wouldn't it be nice if we could use comments in the file .. ?
     # in such cases, it might be better to use jinja2 or something
-    cfg_bbs = ConfigParser.SafeConfigParser()
+    cfg_bbs = configparser.ConfigParser()
 
     cfg_bbs.add_section('system')
     cfg_bbs.set('system', 'bbsname', 'x/84')
@@ -166,17 +167,12 @@ def init_bbs_ini():
     cfg_bbs.set('ssh', 'port', '6022')
     cfg_bbs.set('ssh', 'hostkey', os.path.expanduser(
         os.path.join('~', '.x84', 'ssh_host_rsa_key')))
-    cfg_bbs.set('ssh', 'hostkeybits', '2048')
+    cfg_bbs.set('ssh', 'hostkeybits', '3072')
 
     cfg_bbs.add_section('sftp')
     cfg_bbs.set('sftp', 'enabled', 'no')
     cfg_bbs.set('sftp', 'root', os.path.expanduser(
         os.path.join('~', 'x84-sftp_root')))
-    try:
-        os.makedirs(
-            os.path.join(cfg_bbs.get('sftp', 'root'), "__uploads__"))
-    except OSError:
-        pass
     cfg_bbs.set('sftp', 'uploads_filemode', '644')
 
     # rlogin only works on port 513
@@ -221,17 +217,14 @@ def init_bbs_ini():
     cfg_bbs.set('session', 'default_encoding', 'utf8')
 
     cfg_bbs.add_section('irc')
-    cfg_bbs.set('irc', 'server', 'efnet.portlane.se')
-    cfg_bbs.set('irc', 'port', '6667')
-    cfg_bbs.set('irc', 'channel', '#1984')
+    cfg_bbs.set('irc', 'server', 'irc.libera.chat')
+    cfg_bbs.set('irc', 'port', '6697')
+    cfg_bbs.set('irc', 'channel', '#x84')
     cfg_bbs.set('irc', 'enable_privnotice', 'yes')
     cfg_bbs.set('irc', 'maxnick', '9')
-    cfg_bbs.set('irc', 'ssl', 'no')
-
-    cfg_bbs.add_section('shroo-ms')
-    cfg_bbs.set('shroo-ms', 'enabled', 'no')
-    cfg_bbs.set('shroo-ms', 'idkey', '')
-    cfg_bbs.set('shroo-ms', 'restkey', '')
+    cfg_bbs.set('irc', 'ssl', 'yes')
+    # some irc networks (such as EFnet) use self-signed certificates.
+    cfg_bbs.set('irc', 'ssl_verify', 'yes')
 
     # new user account script
     cfg_bbs.add_section('nua')
@@ -243,7 +236,7 @@ def init_bbs_ini():
     cfg_bbs.set('nua', 'max_email', '30')
     cfg_bbs.set('nua', 'max_location', '24')
     cfg_bbs.set('nua', 'allow_apply', 'yes')
-    invalid_handles = u', '.join((
+    invalid_handles = ', '.join((
         cfg_bbs.get('matrix', 'byecmds'),
         cfg_bbs.get('matrix', 'newcmds'),
         'anonymous', 'sysop',))
@@ -260,17 +253,21 @@ def init_bbs_ini():
     return cfg_bbs
 
 
-def init_log_ini():
-    """ Return ConfigParser instance of logger defaults. """
-    cfg_log = ConfigParser.RawConfigParser()
+def init_log_ini(log_folder=None):
+    """
+    Return ConfigParser instance of logger defaults.
+
+    :param str log_folder: folder of the daily log file, ``~/.x84`` default.
+    """
+    cfg_log = configparser.RawConfigParser()
     cfg_log.add_section('formatters')
     cfg_log.set('formatters', 'keys', 'default')
 
     cfg_log.add_section('formatter_default')
     # for multiprocessing/threads, use: %(processName)s %(threadName) !
     cfg_log.set('formatter_default', 'format',
-                u'%(asctime)s %(levelname)-6s '
-                u'%(filename)10s:%(lineno)-3s %(message)s')
+                '%(asctime)s %(levelname)-6s '
+                '%(filename)10s:%(lineno)-3s %(message)s')
     cfg_log.set('formatter_default', 'class', 'logging.Formatter')
     cfg_log.set('formatter_default', 'datefmt', '%a-%m-%d %I:%M%p')
 
@@ -289,10 +286,11 @@ def init_log_ini():
     cfg_log.set('handler_rotate_daily', 'suffix', '%Y%m%d')
     cfg_log.set('handler_rotate_daily', 'encoding', 'utf8')
     cfg_log.set('handler_rotate_daily', 'formatter', 'default')
-    daily_log = os.path.join(os.path.expanduser(
-        os.path.join('~', '.x84', 'daily.log')))
+    daily_log = os.path.join(
+        os.path.expanduser(log_folder or os.path.join('~', '.x84')),
+        'daily.log')
     cfg_log.set('handler_rotate_daily', 'args',
-                '("' + daily_log + '", "midnight", 1, 60)')
+                '(' + repr(daily_log) + ', "midnight", 1, 60)')
 
     cfg_log.add_section('loggers')
     cfg_log.set('loggers', 'keys',
@@ -349,7 +347,7 @@ def get_ini(section=None, key=None, getter='get', split=False, splitsep=','):
     is returned -- return type decided by the given arguments.
 
     The ``getter`` method is 'get' by default, returning a string.
-    For booleans, use ``getter='get_boolean'``.
+    For booleans, use ``getter='getboolean'``.
 
     To return a list, use ``split=True``.
     """
@@ -374,4 +372,4 @@ def get_ini(section=None, key=None, getter='get', split=False, splitsep=','):
         return False
     if split:
         return []
-    return u''
+    return ''

@@ -1,4 +1,5 @@
 """ Lightbar package for x/84. """
+import copy
 
 # local imports
 from x84.bbs.ansiwin import AnsiWindow
@@ -14,7 +15,7 @@ NETHACK_KEYSET = {'home': [u'y', '0'],
                   'up': [u'k'],
                   'down': [u'j'],
                   'enter': [u'\r'],
-                  'exit': [u'q', u'Q', unichr(27), ],
+                  'exit': [u'q', u'Q', chr(27), ],
                   }
 
 
@@ -62,7 +63,7 @@ class Lightbar(AnsiWindow):
         pos = kwargs.pop('position', (0, 0)) or (0, 0)
 
         self.init_keystrokes(
-            keyset=kwargs.pop('keyset', NETHACK_KEYSET.copy()))
+            keyset=copy.deepcopy(kwargs.pop('keyset', NETHACK_KEYSET)))
 
         AnsiWindow.__init__(self, *args, **kwargs)
         self.position = pos
