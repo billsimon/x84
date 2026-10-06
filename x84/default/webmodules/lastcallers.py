@@ -2,9 +2,10 @@
 
 import web
 from datetime import datetime
+import html
 import json
 from x84.bbs import DBProxy
-from x84.bbs.ini import CFG
+from x84.bbs.ini import get_ini
 
 
 class LastCallersApi(object):
@@ -16,23 +17,24 @@ class LastCallersApi(object):
 
         num = int(num)
         callers = DBProxy('lastcalls', use_session=False).items()
-        last = sorted(callers[-num:], reverse=True,
-                      key=lambda caller: caller[1][0])
+        last = sorted(callers, reverse=True,
+                      key=lambda caller: caller[1][0])[:num]
 
         # output JSON instead?
         if 'json' in web.input(_method='get'):
             return json.dumps(last)
 
         callers_html = ''
-        board = CFG.get('system', 'bbsname', 'x/84')
+        board = get_ini('system', 'bbsname') or 'x/84'
         page_title = 'Last {num} Callers to {board}'.format(
-            num=num, board=board)
+            num=num, board=html.escape(board))
 
         for caller in last:
             callers_html += ''.join(('<li><b>{who}</b> {affil} ',
                                      '<small>at {when}</small></li>')).format(
-                who=caller[0],
-                affil='(%s)' % caller[1][2] if caller[1][2] else '',
+                who=html.escape(caller[0]),
+                affil=('(%s)' % html.escape(caller[1][2])
+                       if caller[1][2] else ''),
                 when=datetime.fromtimestamp(caller[1][0]))
 
         web.header('Content-Type', 'text/html; charset=utf-8', unique=True)

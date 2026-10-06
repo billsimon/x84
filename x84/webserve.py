@@ -1,11 +1,12 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 """ web server for x/84. """
 import threading
-import traceback
 import logging
-import web
+import ssl
 import sys
 import os
+
+import web
 
 
 class Favicon(object):
@@ -71,13 +72,13 @@ def get_urls_funcs(web_modules):
         # [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)]
         # then, use slice to 'step 2' =>
         # [(1, 2), (3, 4), (5, 6), (7, 8)]
-        for (url, f_key) in zip(api['urls'], api['urls'][1:])[::2]:
+        for (url, f_key) in list(zip(api['urls'], api['urls'][1:]))[::2]:
             if f_key not in funcs:
                 log.error('module {module} provided url {url_tuple} without '
                           'matching function (available: {f_avail})'
                           .format(module=module,
                                   url_tuple=(url, f_key,),
-                                  f_avail=funcs.keys()))
+                                  f_avail=list(funcs.keys())))
             else:
                 log.debug('add url {0} => {1}'.format(
                     url, funcs[f_key].__name__))
@@ -85,12 +86,35 @@ def get_urls_funcs(web_modules):
     return urls, funcs
 
 
+def get_ssl_context(cert, key, chain=None):
+    """
+    Return :class:`ssl.SSLContext` for serving https.
+
+    :param str cert: path to certificate file.
+    :param str key: path to private key file.
+    :param str chain: optional path to certificate chain file.
+    :raises ValueError: certificate or key could not be loaded.
+    """
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        context.load_cert_chain(certfile=cert, keyfile=key)
+    except (OSError, ssl.SSLError) as err:
+        # wrap exception to contain filepath to 'cert' and 'key' files,
+        # which will hopefully help the user better understand what
+        # otherwise be very obscure.
+        raise ValueError('Exception loading ssl certificate file {0!r} '
+                         'and key file {1!r}: {2}'.format(cert, key, err))
+    if chain is not None:
+        context.load_verify_locations(cafile=chain)
+    return context
+
+
 def server(urls, funcs):
     """ Main server thread for running the web server """
     from x84.bbs import get_ini
-    from web.wsgiserver import CherryPyWSGIServer
-    from web.wsgiserver.ssl_pyopenssl import pyOpenSSLAdapter
-    from OpenSSL import SSL
+    from cheroot import wsgi
+    from cheroot.ssl.builtin import BuiltinSSLAdapter
 
     log = logging.getLogger(__name__)
 
@@ -107,73 +131,24 @@ def server(urls, funcs):
                    getter='getint'
                    ) or 8443
 
-    # List of ciphers made available, composed by haliphax without reference,
-    # but apparently to prevent POODLE? This stuff is hard -- the best source
-    # would probably be to compare by cloudflare's latest sslconfig file:
-    #
-    #   https://github.com/cloudflare/sslconfig/blob/master/conf
-    #
-    cipher_list = (get_ini(section='web', key='cipher_list')
-                   or ':'.join((
-                       'ECDH+AESGCM',
-                       'ECDH+AES256',
-                       'ECDH+AES128',
-                       'ECDH+3DES',
-                       'DH+AESGCM',
-                       'DH+AES256',
-                       'DH+AES',
-                       'DH+3DES',
-                       'RSA+AESGCM',
-                       'RSA+AES',
-                       'RSA+3DES',
-                       '!aNULL',
-                       '!MD5',
-                       '!DSS',
-                   )))
-
-    CherryPyWSGIServer.ssl_adapter = pyOpenSSLAdapter(cert, key, chain)
-    CherryPyWSGIServer.ssl_adapter.context = SSL.Context(SSL.SSLv23_METHOD)
-    CherryPyWSGIServer.ssl_adapter.context.set_options(SSL.OP_NO_SSLv3)
-
-    try:
-        CherryPyWSGIServer.ssl_adapter.context.use_certificate_file(cert)
-    except Exception:
-        # wrap exception to contain filepath to 'cert' file, which will
-        # hopefully help the user better understand what otherwise be very
-        # obscure.
-        error = ''.join(
-            traceback.format_exception_only(
-                sys.exc_info()[0],
-                sys.exc_info()[1])).rstrip()
-        raise ValueError('Exception loading ssl certificate file {0!r}: '
-                         '{1}'.format(cert, error))
-
-    try:
-        CherryPyWSGIServer.ssl_adapter.context.use_privatekey_file(key)
-    except Exception:
-        # also wrap exception to contain filepath to 'key' file.
-        error = ''.join(
-            traceback.format_exception_only(
-                sys.exc_info()[0],
-                sys.exc_info()[1])).rstrip()
-        raise ValueError('Exception loading ssl key file {0!r}: '
-                         '{1}'.format(key, error))
-
-    if chain is not None:
-        (CherryPyWSGIServer.ssl_adapter.context
-         .use_certificate_chain_file(chain))
-
-    CherryPyWSGIServer.ssl_adapter.context.set_cipher_list(cipher_list)
-
-    app = web.application(urls, funcs)
+    adapter = BuiltinSSLAdapter(cert, key, chain)
+    # replace the adapter's default context with our own, requiring TLS 1.2
+    # or better, and raising friendly errors on misconfiguration.
+    adapter.context = get_ssl_context(cert, key, chain)
+    cipher_list = get_ini(section='web', key='cipher_list')
+    if cipher_list:
+        adapter.context.set_ciphers(cipher_list)
 
     web.config.debug = False
+    app = web.application(urls, funcs, autoreload=False)
+
+    httpd = wsgi.Server((addr, port), app.wsgifunc())
+    httpd.ssl_adapter = adapter
 
     log.info('https listening on {addr}:{port}/tcp'
              .format(addr=addr, port=port))
 
-    # Runs CherryPy WSGI server hosting WSGI app.wsgifunc().
-    web.httpserver.runsimple(app.wsgifunc(), (addr, port))  # blocking
+    httpd.safe_start()  # blocking
 
 
 def main(background_daemon=True):

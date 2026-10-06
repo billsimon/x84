@@ -22,6 +22,7 @@ server_tags = x84net
 """
 import logging
 import hashlib
+import hmac
 import json
 import time
 import web
@@ -56,7 +57,7 @@ def parse_auth(request_data):
 
     _, _, when = values
     when = int(when)
-    if time.time() > when + AUTH_EXPIREY:
+    if when > time.time() + AUTH_EXPIREY:
         raise ValueError('Token is from the future')
     elif time.time() - when > AUTH_EXPIREY:
         raise ValueError('Token too far in the past')
@@ -81,11 +82,20 @@ class MessageApi(object):
 
         # prepare request for message, last is the highest
         # index previously received by client
+        try:
+            # clients request messages following id -1 initially.
+            last = max(-1, int(last)) if last else -1
+        except ValueError:
+            raise server_error(
+                log_func=log.info,
+                log_msg='invalid message id: {0!r}'.format(last),
+                status_exc=web.BadRequest)
+
         response_data = get_response(request_data={
             'auth': web.ctx.env['HTTP_AUTH_X84NET'],
             'network': network,
             'action': 'pull',
-            'last': max(0, int(last)),
+            'last': last,
         })
 
         # return response data as json (200 OK)
@@ -180,16 +190,18 @@ def serve_messages_for(board_id, request_data, db_source):
 
     def msgs_after(idx=None):
         """
-        Generator of network messages following index ``idx```.
+        Generator of network messages following index ``idx```, in order.
 
-        If ``idx`` is None, all messages are returned.
+        If ``idx`` is None, all messages are returned.  Messages received
+        from the requesting board are not returned.
         """
-        for msg_id in db_tags.get(request_data['network'], []):
-            if idx is None:
-                yield db_messages[idx]
-            elif (int(msg_id) > int(idx) and
-                  not message_owned_by(msg_id, board_id)):
-                yield db_messages[msg_id]
+        # messages must be served in order: clients record the greatest
+        # message id received, and request only those that follow it.
+        for msg_id in sorted(db_tags.get(request_data['network'], []),
+                             key=int):
+            if ((idx is None or int(msg_id) > int(idx)) and
+                    not message_owned_by(msg_id, board_id)):
+                yield db_messages['%d' % int(msg_id)]
 
     last_seen = request_data.get('last', None)
     pending_messages = msgs_after(last_seen)
@@ -207,7 +219,7 @@ def serve_messages_for(board_id, request_data, db_source):
             u'body': msg.body
         })
         if num_sent >= BATCH_MSGS:
-            log.warn('[{request_data[network]}] Batch limit reached for '
+            log.warning('[{request_data[network]}] Batch limit reached for '
                      'board {board_id}; halting'
                      .format(request_data=request_data, board_id=board_id))
             break
@@ -248,7 +260,11 @@ def receive_message_from(board_id, request_data,
     msg.recipient = pullmsg['recipient']
     msg.subject = pullmsg['subject']
     msg.parent = pullmsg['parent']
-    msg.tags = set(pullmsg['tags'] + [request_data['network']])
+    # a board may not post into other networks hosted by this server.
+    from x84.bbs import get_ini
+    server_tags = get_ini(section='msg', key='server_tags', split=True)
+    msg.tags = set(tag for tag in pullmsg['tags'] if tag not in server_tags)
+    msg.tags.add(request_data['network'])
     msg.body = pullmsg['body']
 
     # ?? is this removing millesconds, or ?
@@ -284,7 +300,7 @@ def get_response(request_data):
 
     if not request_data['network'] in server_tags:
         raise server_error(
-            log_func=log.warn,
+            log_func=log.warning,
             log_msg=('[{data[network]}] not in server_tags ({server_tags})'
                      .format(data=request_data, server_tags=server_tags)),
             status_exc=web.NotFound)
@@ -296,7 +312,7 @@ def get_response(request_data):
         board_id, token, auth_tmval = parse_auth(request_data)
     except ValueError as err:
         raise server_error(
-            log_func=log.warn,
+            log_func=log.warning,
             log_msg=('[{data[network]}] Bad token: {err}'
                      .format(data=request_data, err=err)),
             status_exc=web.Unauthorized)
@@ -312,17 +328,18 @@ def get_response(request_data):
         client_key = keysdb[board_id]
     except KeyError:
         raise server_error(
-            log_func=log.warn,
+            log_func=log.warning,
             log_msg=('[{data[network]}] board_id={board_id}'
                      ': No such key for this network'
                      .format(data=request_data,
                              board_id=board_id)),
             status_exc=web.Unauthorized)
     else:
-        server_key = hashlib.sha256('{0}{1}'.format(client_key, auth_tmval))
-        if token != server_key.hexdigest():
+        server_key = hashlib.sha256('{0}{1}'.format(client_key, auth_tmval)
+                                    .encode('utf8'))
+        if not hmac.compare_digest(token, server_key.hexdigest()):
             raise server_error(
-                log_func=log.warn,
+                log_func=log.warning,
                 log_msg=('[{data[network]}] board_id={board_id}'
                          ': auth-key mismatch'
                          .format(data=request_data,
