@@ -5,6 +5,7 @@ Each test module run starts one server, in a subprocess, on free ports with
 a temporary configuration and database.
 """
 # std imports
+import os
 import re
 import signal
 import subprocess
@@ -78,7 +79,7 @@ def server(tmp_path_factory, request):
             return sock.getsockname()[1]
 
     root = tmp_path_factory.mktemp('x84')
-    ports = {'telnet': free_port(), 'ssh': free_port()}
+    ports = {'telnet': free_port(), 'ssh': free_port(), 'modem': free_port()}
     cfg = x84.bbs.ini.init_bbs_ini()
     cfg.set('system', 'datapath', str(root / 'data'))
     cfg.set('system', 'password_digest', 'internal')
@@ -87,6 +88,9 @@ def server(tmp_path_factory, request):
     cfg.set('ssh', 'port', str(ports['ssh']))
     cfg.set('ssh', 'hostkey', str(root / 'ssh_host_rsa_key'))
     cfg.set('ssh', 'hostkeybits', '2048')
+    cfg.set('modem', 'enabled', 'yes')
+    cfg.set('modem', 'port', str(ports['modem']))
+    cfg.set('modem', 'secret', 'modem-secret')
     with open(root / 'default.ini', 'w') as fout:
         cfg.write(fout)
     log = x84.bbs.ini.init_log_ini(log_folder=str(root))
@@ -105,7 +109,7 @@ def server(tmp_path_factory, request):
         return (root / 'output.log').read_text()
 
     stime = time.time()
-    while 'ssh listening' not in server_log():
+    while 'modem listening' not in server_log():
         assert proc.poll() is None, server_log()
         assert time.time() - stime < 60, server_log()
         time.sleep(0.2)
@@ -199,6 +203,81 @@ def test_ssh_login(server):
             output += channel.recv(65536).decode('utf8', 'replace')
         time.sleep(0.05)
     client.close()
+
+
+def bridge_call(server, environ, secret='modem-secret'):
+    """ Start x84-modem-bridge as datamodem's --exec would. """
+    import os
+    env = dict(os.environ, X84_MODEM_SECRET=secret, **environ)
+    return subprocess.Popen(
+        [sys.executable, '-m', 'x84.modem_bridge', '--port',
+         str(server['modem'])],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env=env)
+
+
+def read_until(proc, pattern, timeout=30):
+    """ Read bridge stdout until ``pattern``, returning screen text. """
+    import select
+    raw = b''
+    stime = time.time()
+    while time.time() - stime < timeout:
+        ready, _, _ = select.select([proc.stdout], [], [], 0.1)
+        if ready:
+            data = os.read(proc.stdout.fileno(), 4096)
+            if not data:
+                break
+            raw += data
+            text = RE_SEQUENCE.sub(u'', raw.decode('cp437', 'replace'))
+            if re.search(pattern, text):
+                return text
+    raise AssertionError('{0!r} not received:\n{1}'.format(
+        pattern, RE_SEQUENCE.sub(u'', raw.decode('cp437', 'replace'))))
+
+
+def test_modem_call(server):
+    """ A modem caller, by way of the bridge, reaches the login prompt. """
+    proc = bridge_call(server, {'CONNECT': '1200', 'MODEM_RATE': '1200',
+                                'CALLER_ID': '+15551234', 'CALLER_NAME': 'Ann',
+                                'MODEM_MODULATION': 'v22'})
+    text = read_until(proc, r'Login:')
+    assert u'CONNECT 1200' in text
+    assert u'matrix.ans not shown at 1200 bps' in text
+    assert u'[modem-+15551234:' in server['log']()
+
+    # the bbs ends the session ('bye'): the bridge exits, and the modem hangs
+    # up when it does.
+    proc.stdin.write(b'bye\r')
+    proc.stdin.flush()
+    assert proc.wait(timeout=30) == 0
+    assert b'the bbs closed the connection' in proc.stderr.read()
+
+
+def test_modem_caller_hangs_up(server):
+    """ The caller hangs up: the bridge's stdin ends, and so does the session. """
+    proc = bridge_call(server, {'CONNECT': '14400 V.42/V.42bis',
+                                'CALLER_ID': '5550199'})
+    text = read_until(proc, r'Login:')
+    # art is shown at 14400.
+    assert u'not shown' not in text
+    proc.stdin.close()
+    assert proc.wait(timeout=30) == 0
+    stime = time.time()
+    while u'[modem-5550199:' not in server['log']() or not re.search(
+            r'\[modem-5550199:\d+\] goodbye', server['log']()):
+        assert time.time() - stime < 20, server['log']()[-2000:]
+        time.sleep(0.2)
+
+
+def test_modem_bridge_wrong_secret(server):
+    proc = bridge_call(server, {'CONNECT': '2400'}, secret='wrong')
+    proc.stdin.close()
+    proc.wait(timeout=30)
+    assert proc.stdout.read() == b''
+    stime = time.time()
+    while u'modem header secret does not match' not in server['log']():
+        assert time.time() - stime < 10, server['log']()[-2000:]
+        time.sleep(0.1)
 
 
 def test_sigterm_shutdown(server):

@@ -241,6 +241,27 @@ def ropen(filename, mode='rb'):
     return open(random.choice(files), mode) if len(files) else None
 
 
+def slow_modem_rate():
+    """
+    Return bit rate of a modem caller too slow for artwork, otherwise 0.
+
+    That is, of a session connected by a modem (see :mod:`x84.modem`) at a
+    lower rate than option ``art_min_rate`` of section ``[modem]`` (2400 by
+    default; 0 never skips artwork).  A screen of ANSI art is several
+    kilobytes, and takes a minute or more to draw at 1200 bps.
+    """
+    session = getsession()
+    if session is None or session.kind != 'modem':
+        return 0
+    min_rate = get_ini('modem', 'art_min_rate')
+    min_rate = 2400 if min_rate == '' else int(min_rate)
+    try:
+        rate = int(session.env.get('MODEM_RATE') or 0)
+    except ValueError:
+        return 0
+    return rate if 0 < rate < min_rate else 0
+
+
 def showart(filepattern, encoding=None, auto_mode=True, center=False,
             poll_cancel=False, msg_cancel=None, force=False):
     """
@@ -270,8 +291,8 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
     current terminal's width.
 
     If ``force`` is set to true then the artwork will be displayed even if it's
-    wider than the screen.
-
+    wider than the screen, or the caller's modem is too slow to want it (see
+    :func:`slow_modem_rate`).
     """
     # pylint: disable=R0913,R0914
     #         Too many arguments
@@ -313,6 +334,16 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
 
     file_basename = os.path.basename(filename)
 
+    # Artwork takes minutes to draw at the slowest modem rates.
+    rate = slow_modem_rate()
+    if rate and not force:
+        yield u''.join((
+            term.bold_black(u'-- '),
+            u'{0} not shown at {1} bps'.format(file_basename, rate),
+            term.bold_black(u' --'),
+            u'\r\n',
+        ))
+        return
     # Parse the piece
     with open(filename, 'rb') as fin:
         parsed = SAUCE(fin)
