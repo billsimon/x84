@@ -124,7 +124,7 @@ def display_banner(filepattern, vertical_padding=0, **kwargs):
     echo(u'\r\n' * (term.height + 1))
 
     # move to home, insert vertical padding
-    echo(term.home + (u'\r\n' * vertical_padding))
+    echo(term.home + term.clear + (u'\r\n' * vertical_padding))
 
     art_generator = showart(filepattern, **kwargs)
     line_no = 0
