@@ -33,6 +33,34 @@ def _decode(value):
     return value
 
 
+class QuietTransport(paramiko.Transport):
+
+    """
+    A :class:`paramiko.Transport` that condenses logging of failed handshakes.
+
+    Port scanners and other non-ssh clients connecting to the ssh port cause
+    paramiko to log "Exception (server): Error reading SSH protocol banner"
+    at ERROR level, followed by its full traceback.  The traceback is of no
+    use for these, so it is logged as a single DEBUG record, and the first
+    line as a warning.  Tracebacks of "Unknown exception" are left as-is.
+    """
+
+    _quiet_traceback = False
+
+    def _log(self, level, msg, *args):
+        if (level == logging.ERROR and isinstance(msg, str) and
+                msg.startswith(('Exception (server): ',
+                                'Exception (client): '))):
+            self._quiet_traceback = True
+            level = logging.WARNING
+        elif (self._quiet_traceback and level == logging.ERROR and
+                isinstance(msg, list)):
+            # the traceback, as a list of lines, always follows the above
+            self._quiet_traceback = False
+            level, msg = logging.DEBUG, '\n'.join(msg)
+        super(QuietTransport, self)._log(level, msg, *args)
+
+
 class SshClient(BaseClient):
 
     """A remote Ssh Client, instantiated from SshServer. """
@@ -199,7 +227,7 @@ class ConnectSsh(BaseConnect):
     def run(self):
         """ Accept new Ssh connect in thread. """
         try:
-            self.client.transport = paramiko.Transport(self.client.sock)
+            self.client.transport = QuietTransport(self.client.sock)
             self.client.transport.load_server_moduli()
             self.client.transport.add_server_key(self.server_host_key)
             ssh_session = SshSessionServer(client=self.client)

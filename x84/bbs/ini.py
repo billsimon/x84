@@ -325,6 +325,8 @@ def init_log_ini(log_folder=None):
     cfg_log.set('logger_paramiko', 'formatter', 'default')
     cfg_log.set('logger_paramiko', 'handlers', 'console, rotate_daily')
     cfg_log.set('logger_paramiko', 'qualname', 'paramiko.transport')
+    # handlers are already shared with root, don't log everything twice
+    cfg_log.set('logger_paramiko', 'propagate', '0')
 
     # squelch xmodem's debug, too verbose
     cfg_log.add_section('logger_xmodem')
