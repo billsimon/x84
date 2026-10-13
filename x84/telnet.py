@@ -180,6 +180,9 @@ class TelnetClient(BaseClient):
         self.telnet_got_sb = False
         self.telnet_opt_dict = {}
 
+        # whether the last NVT character received was a carriage return.
+        self.telnet_got_cr = False
+
         self.ENV_REQUESTED = False
         self.ENV_REPLIED = False
 
@@ -304,7 +307,15 @@ class TelnetClient(BaseClient):
     def _recv_byte(self, byte):
         """
         Buffer non-telnet commands bytestrings into recv_buffer.
+
+        A telnet client sends the return key as CR LF or CR NUL (RFC 854),
+        the LF or NUL is dropped so that it is not received as a second
+        return key.
         """
+        if self.telnet_got_cr and byte in (b'\n', b'\x00'):
+            self.telnet_got_cr = False
+            return
+        self.telnet_got_cr = (byte == b'\r')
         self.recv_buffer.extend(byte)
 
     def _iac_sniffer(self, byte):

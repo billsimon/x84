@@ -44,8 +44,21 @@ def feed(client, data):
 
 def test_plain_input_is_buffered():
     client = make_client()
-    feed(client, b'hello\r\n')
-    assert client.get_input() == b'hello\r\n'
+    feed(client, b'hello')
+    assert client.get_input() == b'hello'
+
+
+def test_return_key_is_received_as_carriage_return():
+    client = make_client()
+    feed(client, b'a\r\nb\r\x00c\rd\ne')
+    assert client.get_input() == b'a\rb\rc\rd\ne'
+
+
+def test_return_key_split_across_packets():
+    client = make_client()
+    feed(client, b'user\r')
+    feed(client, b'\npass\r\r\n')
+    assert client.get_input() == b'user\rpass\r\r'
 
 
 def test_escaped_iac_is_literal_0xff():
