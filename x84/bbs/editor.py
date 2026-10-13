@@ -171,7 +171,9 @@ class LineEditor(object):
             self._carriage_returned = True
         elif keystroke in self.keyset['exit']:
             self._quit = True
-        elif isinstance(keystroke, int) or len(keystroke) != 1:
+        elif (keystroke is None or isinstance(keystroke, int) or
+                len(keystroke) != 1):
+            # unrecognized sequence (such as ESC ESC) or keycode
             return u''
         elif (ord(keystroke) >= ord(' ') and
                 (self.width is None

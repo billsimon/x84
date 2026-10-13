@@ -58,6 +58,16 @@ def test_line_editor(session):
     assert editor.carriage_returned
 
 
+def test_line_editor_unknown_sequence(session):
+    """ ESC ESC yields a sequence with code None, which raised TypeError. """
+    from x84.bbs import LineEditor
+    term = session.term
+    editor = LineEditor(width=5)
+    assert editor.process_keystroke(None) == u''
+    assert editor.process_keystroke(key(term, u'\x1b\x1b')) == u''
+    assert editor.content == u''
+
+
 def test_line_editor_unlimited_width(session):
     """ width=None, the default, previously raised TypeError on input. """
     from x84.bbs import LineEditor

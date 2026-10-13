@@ -261,8 +261,6 @@ def main():
                                 (u'\b' * len(editor.content)),)))
                             editor.content = u''
                             echo(editor.refresh())
-                elif inp.is_sequence:
-                    echo(editor.process_keystroke(inp.code))
                 else:
                     echo(editor.process_keystroke(inp))
                 inp = term.inkey(0)
