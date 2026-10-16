@@ -1,584 +1,548 @@
-""" Editor script for x/84 """
-# std
+"""
+Full-screen editor for x/84.
+
+Text is typed directly, wrapping at word boundaries, and the cursor
+moves freely with the arrow keys.  Commands are control keys, listed on
+the status bar, or chosen from a menu by pressing Escape:
+
+- ``^Z`` save, ``^A`` abort, ``^G`` help.
+- ``^Q`` opens a window to choose lines of a replied message to quote.
+- ``^Y`` cuts the current line, ``^U`` pastes cut lines.
+- ``^W`` deletes the word left of the cursor, ``^D`` the character under
+  it, and ``^V`` (or Insert) toggles insert and overwrite mode.
+
+The editor draws only ASCII, so that it displays the same for utf8 and
+cp437 terminals.  Its colors may be changed in section ``[editor]`` of
+the configuration: ``color_text``, ``color_quote``, ``color_bar``,
+``color_mark`` and ``color_select``.
+"""
+# std imports
 import os
+import time
 
 # local
-from x84.bbs import getsession, getterminal, encode_pipe, echo
-from x84.bbs import Lightbar, Selector, ScrollingEditor, showart
-from x84.bbs import syncterm_setfont
-
-# This is probably the fourth or more ansi multi-line editor
-# I've written for python. I did the least-effort this time.
-# There isn't any actual multi-line editor, just this script
-# that drives a LineEditor and a Lightbar.
-
-# TODO: use a timer to save the draft -- every 60 seconds or
-# so, instead of on every line change.  This should
-# significantly improve performance, especially on Raspberry Pi.
-
-WHITESPACE = u' '
-SOFTWRAP = u'\n'
-HARDWRAP = u'\r\n'
-UNDO = list()
-UNDOLEVELS = 9
+from x84.bbs import getsession, getterminal, get_ini, decode_pipe, echo
+from x84.bbs import TextBuffer
+from x84.bbs.textbuffer import RE_QUOTED, char_width, quote_lines, text_width
 
 here = os.path.dirname(__file__)
 
-#: preferred fontset for SyncTerm emulator
-syncterm_font = 'cp437'
+#: seconds between saving drafts, when a draft key is given.
+AUTOSAVE_SECONDS = 15
+
+#: maximum number of characters of a document.
+max_length = get_ini(
+    section='editor', key='max_length', getter='getint'
+) or 65536
 
 
-def save_draft(key, ucs):
-    """ Persist draft to database and stack changes to UNDO buffer. """
-    if key is not None:
-        save(key, ucs)
-
-    UNDO.append(ucs)
-    if len(UNDO) > UNDOLEVELS:
-        del UNDO[0]
+def ctrl(ucs):
+    """ Return control character of letter ``ucs``, such as ``^Z``. """
+    return chr(ord(ucs.upper()) & 0x1f)
 
 
-def get_contents(lightbar):
-    """ Return well-formatted document given the lightbar. """
-    return HARDWRAP.join([softwrap_join(_ucs)
-                          for _ucs in get_lbcontent(lightbar).split(HARDWRAP)])
+KEY_SAVE = ctrl('z')
+KEY_ABORT = ctrl('a')
+KEY_QUOTE = ctrl('q')
+KEY_HELP = ctrl('g')
+KEY_CUT = ctrl('y')
+KEY_PASTE = ctrl('u')
+KEY_DELWORD = ctrl('w')
+KEY_DELETE = ctrl('d')
+KEY_INSERT = ctrl('v')
+KEY_REDRAW = ctrl('l')
+
+#: default colors, by name of terminal capability.
+DEFAULT_COLORS = {
+    'text': 'normal',
+    'quote': 'bold_cyan',
+    'bar': 'bold_white_on_blue',
+    'mark': 'black_on_cyan',
+    'select': 'reverse',
+}
 
 
-def save(key, content):
-    """ Persist message to user attrs database. """
-    getsession().user[key] = content
-
-
-def show_help(term):
-    """ Returns help text. """
-    # clear screen
-    echo(term.normal + ('\r\n' * (term.height + 1)) + term.home)
-
-    for line in showart(os.path.join(here, 'art', 'po-help.ans')):
-        echo(line)
-
-
-def wrap_rstrip(value):
-    r""" Remove hardwrap ``u'\r\n'`` and softwrap ``u'\n'`` from value """
-    if value[-len(HARDWRAP):] == HARDWRAP:
-        value = value[:-len(HARDWRAP)]
-    if value[-len(SOFTWRAP):] == SOFTWRAP:
-        value = value[:-len(SOFTWRAP)]
-    return value
-
-
-def softwrap_join(value):
-    r""" Return whitespace-joined string from value split by softwrap ``'\n'``. """
-    return WHITESPACE.join(value.split(SOFTWRAP))
-
-
-def is_hardwrapped(ucs):
-    r""" Returns true if string is hardwrapped with ``'\r\n'``. """
-    return ucs[-(len(HARDWRAP)):] == HARDWRAP
-
-
-def is_softwrapped(ucs):
-    r""" Returns true if string is softwrapped with ``'\n'``. """
-    return ucs[-(len(SOFTWRAP)):] == SOFTWRAP
-
-
-def get_lbcontent(lightbar):
-    """ Returns ucs string for content of Lightbar instance, ``lightbar``. """
-    # a custom 'soft newline' versus 'hard newline' is implemented,
-    # '\n' == 'soft', '\r\n' == 'hard'
-    lines = list()
-    for lno, (_, ucs) in enumerate(lightbar.content):
-        # first line always appends as-is, otherwise if the previous line
-        # matched a hardwrap, or did not match softwrap, then append as-is.
-        # (a simple .endswith() can't wll work with a scheme of '\n' vs.
-        # '\r\n')
-        if lno == 0 or (
-                is_hardwrapped(lines[-1]) or not is_softwrapped(lines[-1])):
-            lines.append(ucs)
+def get_colors(term):
+    """ Return dict of color functions, by name, from configuration. """
+    colors = {}
+    for name, default in DEFAULT_COLORS.items():
+        attr = get_ini(section='editor',
+                       key='color_{0}'.format(name)) or default
+        if attr == 'normal':
+            colors[name] = lambda text: text
         else:
-            # otherwise the most recently appended line must end with
-            # SOFTWRAP, strip that softwrap and re-assign value to a
-            # whitespace-joined value by current line value.
-            lines[-1] = WHITESPACE.join((lines[-1].rstrip(), ucs.lstrip(),))
-    retval = encode_pipe(u''.join(lines))
-    return retval
+            colors[name] = getattr(term, attr)
+    return colors
 
 
-def set_lbcontent(lightbar, ucs):
-    """ Sets content for given Unicode string, ``ucs``. """
-    # a custom 'soft newline' versus 'hard newline' is implemented,
-    # '\n' == 'soft', '\r\n' == 'hard'
-    term = getterminal()
-    content = dict()
-    lno = 0
-    lines = ucs.split(HARDWRAP)
-    for idx, ucs_line in enumerate(lines):
-        if idx == len(lines) - 1 and 0 == len(ucs_line):
-            continue
-        ucs_joined = WHITESPACE.join(ucs_line.split(SOFTWRAP))
-        ucs_wrapped = term.wrap(text=ucs_joined, width=lightbar.visible_width)
-        for inner_lno, inner_line in enumerate(ucs_wrapped):
-            softwrap = SOFTWRAP if inner_lno != len(ucs_wrapped) - 1 else u''
-            content[lno] = u''.join((inner_line, softwrap))
-            lno += 1
-        if 0 == len(ucs_wrapped):
-            content[lno] = HARDWRAP
-            lno += 1
-        else:
-            content[lno - 1] += HARDWRAP
-    if 0 == len(content):
-        content[0] = HARDWRAP
-    lightbar.update(sorted(content.items()))
+def displayable(text, width):
+    """
+    Return ``text`` clipped to ``width`` cells, safe to display.
+
+    Control characters are displayed as ``'?'``.
+    """
+    result, cells = [], 0
+    for ucs in text:
+        cells += char_width(ucs)
+        if cells > width:
+            break
+        result.append(u'?' if ucs < u' ' or ucs == u'\x7f' else ucs)
+    return u''.join(result)
 
 
-def yes_no(lightbar, msg, prompt_msg='are you sure? ', attr=None):
-    """ Prompt user for yes/no, returns True for yes, False for no. """
-    term = getterminal()
-    keyset = {
-        'yes': (u'y', u'Y'),
-        'no': (u'n', u'N'),
-    }
-    echo(u''.join((
-        lightbar.border(),
-        lightbar.pos(lightbar.yloc + lightbar.height - 1, lightbar.xpadding),
-        msg, u' ', prompt_msg,)))
-    sel = Selector(yloc=lightbar.yloc + lightbar.height - 1,
-                   xloc=term.width - 25, width=18,
-                   left='Yes', right=' No ')
-    sel.colors['selected'] = term.reverse_red if attr is None else attr
-    sel.keyset['left'].extend(keyset['yes'])
-    sel.keyset['right'].extend(keyset['no'])
-    echo(sel.refresh())
-    term = getterminal()
+def fit(left, right, width):
+    """ Return ``left`` and ``right`` justified to ``width`` cells. """
+    space = width - text_width(left) - text_width(right)
+    if space < 1:
+        return displayable(left, width).ljust(width)
+    return left + u' ' * space + right
+
+
+def is_escape(term, inp):
+    """
+    Whether keystroke ``inp`` is the escape key.
+
+    Escape followed quickly by another key, such as on slow connections,
+    is received as one alt- key, also matched: its second key is
+    ``inp[1:]``.
+    """
+    return (inp.is_sequence and inp.code == term.KEY_ESCAPE or
+            (inp.name or u'').startswith('KEY_ALT_') and inp[:1] == u'\x1b')
+
+
+def discard_csi(term):
+    """ Discard remainder of an unrecognized CSI sequence. """
     while True:
-        inp = term.inkey()
-        echo(sel.process_keystroke(inp))
-        if((sel.selected and sel.selection == sel.left)
-                or inp in keyset['yes']):
-            # selected 'yes',
-            return True
-        elif((sel.selected or sel.quit)
-                or inp in keyset['no']):
-            # selected 'no'
-            return False
+        inp = term.inkey(0.1)
+        if not inp or u'@' <= inp[-1] <= u'~':
+            return
 
 
-def get_lightbar(ucs):
-    """ Returns lightbar with content of given Unicode string, ``ucs``. """
-    term = getterminal()
-    width = min(80, max(term.width, 40))
-    yloc = 0
-    height = term.height - yloc - 1
-    xloc = max(0, (term.width // 2) - (width // 2))
-    lightbar = Lightbar(height, width, yloc, xloc)
-    lightbar.glyphs['left-vert'] = lightbar.glyphs['right-vert'] = u''
-    lightbar.colors['highlight'] = term.yellow_reverse
-    set_lbcontent(lightbar, ucs)
-    return lightbar
+class Editor(object):
+
+    """ Full-screen editor of a :class:`TextBuffer`. """
+
+    # pylint: disable=R0902
+    #         Too many instance attributes
+
+    def __init__(self, text=u'', title=None, quote=None, quote_header=None,
+                 draft_key=None):
+        self.session, self.term = getsession(), getterminal()
+        self.colors = get_colors(self.term)
+        self.buf = TextBuffer(text, max_length=max_length)
+        self.title = title or u'Editor'
+        self.quote, self.quote_header = quote, quote_header
+        self.quote_inserted = False
+        self.draft_key = draft_key
+        self.draft_saved = (time.time(), self.buf.text)
+        self.notice = None
+        self.last_key = None
+        self.top = 0
+        self.screen = {}
+        self.width = self.height = 0
+        self.layout()
+
+    # layout and display
+
+    @property
+    def text_height(self):
+        """ Number of rows of text area, between title and status bar. """
+        return max(1, self.height - 2)
+
+    def layout(self):
+        """ Size editor to terminal. """
+        self.width, self.height = self.term.width, self.term.height
+        # the last column remains for the cursor at the end of a full row.
+        self.buf.width = max(10, self.width - 1)
+
+    def draw_row(self, yloc, style, text):
+        """
+        Return sequence to display ``text`` of ``style`` at row ``yloc``.
+
+        Only the part that differs from what is already displayed there
+        is written, so that typing is quick even on slow connections.
+        """
+        text = displayable(text, self.width - 1)
+        prior_style, prior = self.screen.get(yloc, (None, None))
+        if (prior_style, prior) == (style, text):
+            return u''
+        self.screen[yloc] = (style, text)
+        same = 0
+        if prior_style == style:
+            limit = min(len(prior), len(text))
+            while same < limit and prior[same] == text[same]:
+                same += 1
+        result = self.term.move(yloc, text_width(text[:same]))
+        if text[same:]:
+            result += self.colors[style](text[same:])
+        if prior is None or text_width(prior) > text_width(text):
+            result += self.term.normal + self.term.clear_eol
+        return result
+
+    def draw_bar(self, yloc, left, right=u''):
+        """ Return sequence to display a title or status bar. """
+        return self.draw_row(yloc, 'bar', fit(left, right, self.width - 1))
+
+    def status_text(self):
+        """ Return (left, right) text of status bar. """
+        if self.notice:
+            return u' ' + self.notice, u''
+        hints = [(u'Z', u'Save'), (u'A', u'Abort')]
+        if self.quote:
+            hints.append((u'Q', u'Quote'))
+        hints.append((u'G', u'Help'))
+        col = self.buf.cursor_rowcol()[1]
+        right = u'Ln {0}/{1} Col {2} {3} '.format(
+            self.buf.para + 1, len(self.buf.paragraphs), col + 1,
+            u'OVR' if self.buf.overwrite else u'INS')
+        left = u''
+        for key, desc in hints:
+            item = u' ^{0} {1}'.format(key, desc)
+            if text_width(left + item + right) >= self.width - 1:
+                break
+            left += item
+        return left, right
+
+    def render(self, full=False):
+        """ Display changes to the editor since last call. """
+        term = self.term
+        output = []
+        if full:
+            output.append(term.normal + term.clear)
+            self.screen = dict(
+                (yloc, ('text', u'')) for yloc in range(self.height))
+        rows = self.buf.rows()
+        row, col = self.buf.cursor_rowcol()
+        height = self.text_height
+        if row < self.top or row >= self.top + height:
+            # scroll by half a page, rather than every row.
+            self.top = max(0, row - height // 2)
+        for yloc in range(height):
+            idx = self.top + yloc
+            text, style = u'', 'text'
+            if idx < len(rows):
+                text = self.buf.row_text(rows[idx])
+                if RE_QUOTED.match(self.buf.paragraphs[rows[idx][0]]):
+                    style = 'quote'
+            output.append(self.draw_row(1 + yloc, style, text))
+        output.append(self.draw_bar(0, u' ' + self.title, u'Esc Menu '))
+        output.append(self.draw_bar(self.height - 1, *self.status_text()))
+        output.append(term.move(1 + row - self.top, min(col, self.width - 1)))
+        echo(u''.join(output))
+
+    def prompt(self, notice):
+        """ Display ``notice`` on status bar and return next keystroke. """
+        self.notice = notice
+        self.render()
+        echo(self.term.move(self.height - 1,
+                            min(self.width - 2, text_width(notice) + 1)))
+        inp = self.term.inkey()
+        self.notice = None
+        return inp
+
+    # drafts
+
+    def autosave(self, force=False):
+        """ Save draft, when due. """
+        if not self.draft_key:
+            return
+        stime, text = self.draft_saved
+        if text != self.buf.text and (
+                force or time.time() - stime >= AUTOSAVE_SECONDS):
+            self.session.user[self.draft_key] = self.buf.text
+            self.draft_saved = (time.time(), self.buf.text)
+
+    def autosave_timeout(self):
+        """ Seconds until the draft should be saved, or None. """
+        stime, text = self.draft_saved
+        if not self.draft_key or text == self.buf.text:
+            return None
+        return max(0.1, stime + AUTOSAVE_SECONDS - time.time())
+
+    def discard_draft(self):
+        """ Remove saved draft. """
+        if self.draft_key and self.session.user.get(self.draft_key):
+            del self.session.user[self.draft_key]
+
+    # sub-screens
+
+    def show_help(self):
+        """ Display help text, scrolled by arrow keys. """
+        term = self.term
+        with open(os.path.join(here, 'editor.txt')) as fin:
+            lines = [decode_pipe(line) for line in fin.read().splitlines()]
+        height = self.text_height
+        last_top = max(0, len(lines) - height)
+        top = 0
+        while True:
+            output = [
+                self.draw_bar(0, u' Help'),
+                self.draw_bar(self.height - 1,
+                              u' Up/Down/PgUp/PgDn scroll, '
+                              u'any other key returns',
+                              u'{0}/{1} '.format(top + 1, len(lines)))]
+            # lines contain color sequences of decoded pipe codes, they
+            # are drawn whole rather than by draw_row().
+            for yloc in range(height):
+                idx = top + yloc
+                self.screen[1 + yloc] = (None, None)
+                output.append(term.move(1 + yloc, 0) + term.normal +
+                              term.clear_eol)
+                if idx < len(lines):
+                    output.append(lines[idx] + term.normal)
+            echo(u''.join(output))
+            inp = term.inkey()
+            code = inp.code if inp.is_sequence else None
+            if code == term.KEY_DOWN:
+                top = min(last_top, top + 1)
+            elif code == term.KEY_UP:
+                top = max(0, top - 1)
+            elif code == term.KEY_PGDOWN:
+                top = min(last_top, top + height)
+            elif code == term.KEY_PGUP:
+                top = max(0, top - height)
+            else:
+                return
+
+    def quote_window(self):
+        """ Choose lines of the replied message to insert as quotation. """
+        term = self.term
+        # lines are displayed following a mark column of 2 cells.
+        lines = quote_lines(self.quote, self.buf.width - 2)
+        height = self.text_height
+        marks, index, top = set(), 0, 0
+        while True:
+            if index < top or index >= top + height:
+                top = max(0, index - height // 2)
+            output = [self.draw_bar(
+                0, u' Quote: Space marks, A all, Enter inserts, '
+                u'Esc cancels')]
+            for yloc in range(height):
+                idx = top + yloc
+                text, style = u'', 'text'
+                if idx < len(lines):
+                    text = (u'+ ' if idx in marks else u'  ') + lines[idx]
+                    style = ('select' if idx == index else
+                             'mark' if idx in marks else 'quote')
+                output.append(self.draw_row(1 + yloc, style, text))
+            output.append(self.draw_bar(
+                self.height - 1, u' {0} marked'.format(len(marks)),
+                u'Line {0}/{1} '.format(index + 1, len(lines))))
+            output.append(term.move(1 + index - top, 0))
+            echo(u''.join(output))
+
+            inp = term.inkey()
+            code = inp.code if inp.is_sequence else None
+            if code == term.KEY_UP:
+                index = max(0, index - 1)
+            elif code == term.KEY_DOWN:
+                index = min(len(lines) - 1, index + 1)
+            elif code == term.KEY_PGUP:
+                index = max(0, index - height)
+            elif code == term.KEY_PGDOWN:
+                index = min(len(lines) - 1, index + height)
+            elif code == term.KEY_HOME:
+                index = 0
+            elif code == term.KEY_END:
+                index = len(lines) - 1
+            elif inp == u' ':
+                marks.symmetric_difference_update([index])
+                index = min(len(lines) - 1, index + 1)
+            elif inp.lower() == u'a':
+                if len(marks) == len(lines):
+                    marks.clear()
+                else:
+                    marks.update(range(len(lines)))
+            elif code == term.KEY_ENTER:
+                break
+            elif is_escape(term, inp):
+                return
+
+        chosen = [lines[idx] for idx in sorted(marks or [index])]
+        if self.quote_header and not self.quote_inserted:
+            chosen.insert(0, self.quote_header)
+        if self.buf.insert_paragraphs(chosen):
+            self.quote_inserted = True
+        else:
+            echo(u'\a')
+
+    def menu(self, inp=None):
+        """
+        Command menu of escape key, returns result of command.
+
+        The menu is displayed and a choice prompted, unless already given
+        as keystroke ``inp``.
+        """
+        choices = [(u'S', u'ave', KEY_SAVE), (u'A', u'bort', KEY_ABORT),
+                   (u'U', u'ndo', None)]
+        if self.quote:
+            choices.append((u'Q', u'uote', KEY_QUOTE))
+        choices.append((u'H', u'elp', KEY_HELP))
+        if not inp:
+            inp = self.prompt(u'Menu: {0}  (Esc returns)'.format(u'  '.join(
+                u'{0}){1}'.format(key, rest) for key, rest, _ in choices)))
+        if len(inp) == 1 and inp < u' ' and not is_escape(self.term, inp):
+            # control keys of commands, such as ^Z, work here as well.
+            return self.command(str(inp))
+        for key, _, command in choices:
+            if inp.upper() == key:
+                if command is not None:
+                    return self.command(command)
+                if not self.buf.undo():
+                    echo(u'\a')
+        return None
+
+    # input
+
+    def command(self, inp):
+        """
+        Perform command of control key ``inp``.
+
+        Returns ``(True, value)`` when the editor exits with ``value``.
+        """
+        buf = self.buf
+        if inp == KEY_SAVE:
+            return True, buf.text
+        elif inp == KEY_ABORT:
+            if buf.modified and not buf.is_empty:
+                inp = self.prompt(u'Abort, discarding your text? (y/N)')
+                if inp.lower() != u'y':
+                    return None
+            return True, False
+        elif inp == KEY_HELP:
+            self.show_help()
+            self.render(full=True)
+        elif inp == KEY_QUOTE and self.quote:
+            self.quote_window()
+            self.render(full=True)
+        elif inp == KEY_CUT:
+            buf.cut_paragraph()
+        elif inp == KEY_PASTE:
+            if not buf.paste():
+                echo(u'\a')
+        elif inp == KEY_DELWORD:
+            buf.delete_word_left()
+        elif inp == KEY_DELETE:
+            buf.delete()
+        elif inp == KEY_INSERT:
+            buf.overwrite = not buf.overwrite
+        elif inp == KEY_REDRAW:
+            self.render(full=True)
+        return None
+
+    def handle(self, inp):
+        """
+        Process keystroke ``inp``.
+
+        Returns ``(True, value)`` when the editor exits with ``value``.
+        """
+        term, buf = self.term, self.buf
+        code = inp.code if inp.is_sequence else None
+        last_key, self.last_key = self.last_key, str(inp)
+        if str(inp) == u'\n' and last_key == u'\r':
+            # carriage return followed by line feed is one return key.
+            return None
+
+        movement = {
+            term.KEY_UP: buf.up,
+            term.KEY_DOWN: buf.down,
+            term.KEY_HOME: buf.home,
+            term.KEY_END: buf.end,
+            term.KEY_PGUP: lambda: buf.up(self.text_height - 1),
+            term.KEY_PGDOWN: lambda: buf.down(self.text_height - 1),
+            term.KEY_LEFT: (buf.word_left if inp.name == 'KEY_CTRL_LEFT'
+                            else buf.left),
+            term.KEY_RIGHT: (buf.word_right if inp.name == 'KEY_CTRL_RIGHT'
+                             else buf.right),
+        }
+        if code in movement:
+            movement[code]()
+        elif code == term.KEY_ENTER:
+            if not buf.newline():
+                echo(u'\a')
+        elif code == term.KEY_BACKSPACE:
+            buf.backspace()
+        elif code == term.KEY_DELETE:
+            buf.delete()
+        elif code == term.KEY_TAB:
+            buf.insert(u' ' * (4 - buf.pos % 4))
+        elif code == term.KEY_INSERT:
+            buf.overwrite = not buf.overwrite
+        elif is_escape(term, inp):
+            return self.menu(inp[1:])
+        elif inp.name == 'CSI':
+            discard_csi(term)
+        elif inp.is_sequence:
+            # other function keys are ignored.
+            pass
+        elif len(inp) == 1 and inp < u' ':
+            return self.command(str(inp))
+        elif inp.isprintable():
+            if not buf.insert(str(inp)):
+                echo(u'\a')
+        return None
+
+    def run(self):
+        """ Edit until saved or aborted, return result. """
+        self.render(full=True)
+        while True:
+            event, data = self.session.read_events(
+                ('refresh', 'input'), self.autosave_timeout())
+            if event == 'refresh':
+                self.layout()
+                self.render(full=True)
+                continue
+            if event == 'input':
+                self.session.buffer_input(data, pushback=True)
+                # process all keys received, such as pasted text, before
+                # displaying the result.
+                while True:
+                    inp = self.term.inkey(0)
+                    if not inp:
+                        break
+                    result = self.handle(inp)
+                    if result is not None:
+                        return result[1]
+            self.autosave()
+            self.render()
 
 
-def get_lneditor(lightbar):
-    """ Returns editor positioned at location of current selection. """
-    term = getterminal()
-    width = min(80, max(term.width, 40))
-    yloc = (lightbar.yloc + lightbar.ypadding + lightbar.position[0] - 1)
-    xloc = max(0, (term.width // 2) - (width // 2))
-    lneditor = ScrollingEditor(width=width, yloc=yloc, xloc=xloc)
-    lneditor.enable_scrolling = True
-    lneditor.max_length = 65534
-    lneditor.glyphs['bot-horiz'] = u''
-    lneditor.glyphs['top-horiz'] = u''
-    lneditor.colors['highlight'] = term.red_reverse
-    lneditor.colors['border'] = term.bold_red
-    # converts u'xxxxxx\r\n' to 'xxxxxx',
-    # or 'zzzz\nxxxxxx\n' to u'zzzz xxxxxx',
-    lneditor.update(softwrap_join(wrap_rstrip(lightbar.selection[1])))
-    return lneditor
-
-
-def main(save_key=None, continue_draft=False):
+def main(save_key=None, continue_draft=False, title=None,
+         quote=None, quote_header=None, draft_key=None):
     """
     Main Editor procedure.
 
-    When argument ``save_key`` is non-None, the result is saved
-    to the user attribute of the same name.  When unset, the
-    contents are returned to the caller.
+    When argument ``save_key`` is non-None, the result is saved to the
+    user attribute of the same name, and True is returned.  Otherwise
+    the text is returned to the caller.  False is returned when aborted.
 
-    When argument ``continue_draft`` is non-None, the editor
-    continues a previously saved draft, whose contents is its
-    value.
+    :param str continue_draft: initial text, such as a previously saved
+        draft.
+    :param str title: displayed in the title bar, such as a subject.
+    :param str quote: text of a message replied to, whose lines may be
+        chosen for quotation by ``^Q``.
+    :param str quote_header: line inserted before the first quotation,
+        such as ``'On ..., biff wrote:'``.
+    :param str draft_key: user attribute to which text is periodically
+        saved while editing, so that it may be continued after a lost
+        connection.  It is removed when saved or aborted.
     """
-    # pylint: disable=R0914,R0912,R0915
-    #         Too many local variables
-    #         Too many branches
-    #         Too many statements
     session, term = getsession(), getterminal()
-
-    # set syncterm font, if any
-    if term.kind.startswith('ansi'):
-        echo(syncterm_setfont(syncterm_font))
-
-    movement = (term.KEY_UP, term.KEY_DOWN, term.KEY_PGDOWN,
-                term.KEY_PGUP, term.KEY_HOME, term.KEY_END,
-                u'\r', term.KEY_ENTER)
-    keyset = {'edit': ('\r', '\n'),
-              'command': (u'\x1b',),
-              'kill': (u'K',),
-              'undo': (u'u', 'U',),
-              'goto': (u'G',),
-              'insert': (u'I',),
-              'insert-before': (u'O',),
-              'insert-after': (u'o',),
-              'join': (u'J',),
-              'rubout': (u'\x08', u'\x7f', u'\x17'),
-              }
-
-    def merge():
-        """
-        Merges line editor content as a replacement for the currently
-        selected lightbar row. Returns True if text inserted caused
-        additional rows to be appended, which is meaningful in a window
-        refresh context.
-        """
-        lightbar.content[lightbar.index] = [
-            lightbar.selection[0],
-            softwrap_join(wrap_rstrip(lneditor.content))
-            + HARDWRAP]
-        prior_length = len(lightbar.content)
-        prior_position = lightbar.position
-        set_lbcontent(lightbar, get_lbcontent(lightbar))
-        if len(lightbar.content) - prior_length == 0:
-            echo(lightbar.refresh_row(prior_position[0]))
-            return False
-        while len(lightbar.content) - prior_length > 0:
-            # hidden move-down for each appended line
-            lightbar.move_down()
-            prior_length += 1
-        return True
-
-    def statusline(lightbar):
-        """
-        Display status line and command help on ``lightbar`` borders
-        """
-        lightbar.colors['border'] = term.red if edit else term.yellow
-        keyset_cmd = u''
-        if not edit:
-            keyset_cmd = u''.join((
-                term.yellow(u'-( '),
-                term.yellow_underline(u'S'), u':', term.bold(u'ave'),
-                u' ',
-                term.yellow_underline(u'A'), u':', term.bold(u'bort'),
-                u' ',
-                term.yellow_underline(u'?'), u':', term.bold(u'help'),
-                term.yellow(u' )-'),))
-            keyset_xpos = max(0, lightbar.width -
-                              (term.length(keyset_cmd) + 3))
-            keyset_cmd = lightbar.pos(lightbar.yloc + lightbar.height - 1,
-                                      keyset_xpos
-                                      ) + keyset_cmd
-        return u''.join((
-            lightbar.border(),
-            keyset_cmd,
-            lightbar.pos(lightbar.yloc + lightbar.height - 1,
-                         lightbar.xpadding),
-            u''.join((
-                term.red(u'-[ '),
-                u'EditiNG liNE ',
-                term.reverse_red('%d' % (lightbar.index + 1,)),
-                term.red(u' ]-'),)) if edit else u''.join((
-                    term.yellow(u'-( '),
-                    u'liNE ',
-                    term.yellow('%d/%d ' % (
-                        lightbar.index + 1,
-                        len(lightbar.content),)),
-                    '%3d%% ' % (
-                        int((float(lightbar.index + 1)
-                             / max(1, len(lightbar.content))) * 100)),
-                    term.yellow(u' )-'),)),
-            lightbar.title(u''.join((
-                term.red('-] '),
-                term.bold(u'Escape'),
-                u':', term.bold_red(u'command mode'),
-                term.red(' [-'),)
-            ) if edit else u''.join((
-                term.yellow('-( '),
-                term.bold(u'Enter'),
-                u':', term.bold_yellow(u'edit mode'),
-                term.yellow(' )-'),))),
-            lightbar.fixate(),
-        ))
-
-    def redraw_lneditor(lightbar, lneditor):
-        """
-        Return ucs suitable for refreshing line editor.
-        """
-        return ''.join((
-            term.normal,
-            statusline(lightbar),
-            lneditor.border(),
-            lneditor.refresh()))
-
-    def get_ui(ucs, lightbar=None):
-        """
-        Returns Lightbar and ScrollingEditor instance.
-        """
-        lbr = get_lightbar(ucs)
-        lbr.position = (lightbar.position
-                        if lightbar is not None else (0, 0))
-        lne = get_lneditor(lbr)
-        return lbr, lne
-
-    def banner():
-        """
-        Returns string suitable clearing screen
-        """
-        return u''.join((
-            term.move(0, 0),
-            term.normal,
-            term.clear))
-
-    def redraw(lightbar, lneditor):
-        """
-        Returns ucs suitable for redrawing Lightbar
-        and ScrollingEditor UI elements.
-        """
-        return u''.join((
-            term.normal,
-            redraw_lightbar(lightbar),
-            redraw_lneditor(lightbar, lneditor) if edit else u'',
-        ))
-
-    def redraw_lightbar(lightbar):
-        """ Returns ucs suitable for redrawing Lightbar. """
-        return u''.join((
-            statusline(lightbar),
-            lightbar.refresh(),))
-
-    def resize(lightbar):
-        """ Resize Lightbar. """
-        if edit:
-            # always re-merge current line on resize,
-            merge()
-        lbr, lne = get_ui(get_lbcontent(lightbar), lightbar)
-        echo(redraw(lbr, lne))
-        return lbr, lne
-
-    if continue_draft:
-        ucs = continue_draft
-    else:
-        ucs = u''
-    lightbar, lneditor = get_ui(ucs, None)
-    echo(banner())
-    dirty = True
-    edit = False
-    digbuf, num_repeat = u'', -1
-    count_repeat = lambda: range(max(num_repeat, 1))
-    while True:
-        # poll for refresh
-        if session.poll_event('refresh'):
-            echo(banner())
-            lightbar, lneditor = resize(lightbar)
-            dirty = True
-        if dirty:
-            session.activity = 'editing %s' % (save_key,)
-            echo(redraw(lightbar, lneditor))
-            dirty = False
-
-        # poll for input
-        inp = term.inkey()
-
-        # buffer keystrokes for repeat
-        if (not edit and inp and inp.isdigit()):
-            digbuf += inp
-            if len(digbuf) > 10:
-                # overflow,
-                echo(u'\a')
-                digbuf = inp
-            try:
-                num_repeat = int(digbuf)
-            except ValueError:
-                try:
-                    num_repeat = int(inp)
-                except ValueError:
-                    pass
-            continue
-        else:
-            digbuf = u''
-
-        # toggle edit mode,
-        if (inp in keyset['command']) or not edit and inp in keyset['edit']:
-
-            edit = not edit  # toggle
-
-            if not edit:
-                # switched to command mode, merge our lines
-
-                echo(term.normal + lneditor.erase_border())
-
-                merge()
-                lightbar.colors['highlight'] = term.yellow_reverse
-
-            else:
-                # switched to edit mode, save draft,
-                # instantiate new line editor
-                save_draft(save_key, get_lbcontent(lightbar))
-                lneditor = get_lneditor(lightbar)
-                lightbar.colors['highlight'] = term.red_reverse
-            dirty = True
-
-        # command mode, kill line
-        elif not edit and inp in keyset['kill']:
-            # when 'killing' a line, make accomidations to clear
-            # bottom-most row, otherwise a ghosting effect occurs
-            for _ in count_repeat():
-                del lightbar.content[lightbar.index]
-                set_lbcontent(lightbar, get_lbcontent(lightbar))
-            if lightbar.visible_bottom > len(lightbar.content):
-                echo(lightbar.refresh_row(lightbar.visible_bottom + 1))
-            else:
-                dirty = True
-            save_draft(save_key, get_lbcontent(lightbar))
-
-        # command mode, insert line
-        elif not edit and inp in keyset['insert']:
-            for _ in count_repeat():
-                lightbar.content.insert(lightbar.index,
-                                        (lightbar.index, HARDWRAP,))
-                set_lbcontent(lightbar, get_lbcontent(lightbar))
-            save_draft(save_key, get_lbcontent(lightbar))
-            dirty = True
-
-        # command mode; goto line
-        elif not edit and inp in keyset['goto']:
-            if num_repeat == -1:
-                # 'G' alone goes to end of file,
-                num_repeat = len(lightbar.content)
-            echo(lightbar.goto((num_repeat or 1) - 1))
-            echo(statusline(lightbar))
-
-        # command mode; insert-before (switch to edit mode)
-        elif not edit and inp in keyset['insert-before']:
-            lightbar.content.insert(lightbar.index,
-                                    (lightbar.index, HARDWRAP,))
-            set_lbcontent(lightbar, get_lbcontent(lightbar))
-            edit = dirty = True
-            # switched to edit mode, save draft,
-            # instantiate new line editor
-            lightbar.colors['highlight'] = term.red_reverse
-            lneditor = get_lneditor(lightbar)
-            save_draft(save_key, get_lbcontent(lightbar))
-
-        # command mode; insert-after (switch to edit mode)
-        elif not edit and inp in keyset['insert-after']:
-            lightbar.content.insert(lightbar.index + 1,
-                                    (lightbar.index + 1, HARDWRAP,))
-            set_lbcontent(lightbar, get_lbcontent(lightbar))
-            edit = dirty = True
-            # switched to edit mode, save draft,
-            # instantiate new line editor
-            lightbar.colors['highlight'] = term.red_reverse
-            lightbar.move_down()
-            lneditor = get_lneditor(lightbar)
-            save_draft(save_key, get_lbcontent(lightbar))
-
-        # command mode, undo
-        elif not edit and inp in keyset['undo']:
-            for _ in count_repeat():
-                if len(UNDO):
-                    set_lbcontent(lightbar, UNDO.pop())
-                    dirty = True
-                else:
-                    echo(u'\a')
-                    break
-
-        # command mode, join line
-        elif not edit and inp in keyset['join']:
-            for _ in count_repeat():
-                if lightbar.index + 1 < len(lightbar.content):
-                    idx = lightbar.index
-                    lightbar.content[idx] = (
-                        idx, WHITESPACE.join((
-                            lightbar.content[idx][1].rstrip(),
-                            lightbar.content[idx + 1][1].lstrip(),))
-                    )
-                    del lightbar.content[idx + 1]
-                    prior_length = len(lightbar.content)
-                    set_lbcontent(lightbar, get_lbcontent(lightbar))
-                    if len(lightbar.content) - prior_length > 0:
-                        lightbar.move_down()
-                    dirty = True
-                else:
-                    echo(u'\a')
-                    break
-            if dirty:
-                save_draft(save_key, get_lbcontent(lightbar))
-
-        # command mode, basic cmds & movement
-        elif not edit and inp:
-            if inp in (u'a', u'A',):
-                if yes_no(lightbar, term.yellow(u'- ')
-                          + term.bold_red(u'AbORt')
-                          + term.yellow(u' -')):
-                    return False
-                dirty = True
-            elif inp in (u's', u'S',):
-                if yes_no(lightbar, term.yellow(u'- ')
-                          + term.bold_green(u'SAVE')
-                          + term.yellow(u' -'), term.reverse_green):
-                    # save contents to user attribtue
-                    content = get_contents(lightbar)
-                    if not save_key:
-                        # return entire message body as return value
-                        return content
-                    save(save_key, content)
-                    return True
-                dirty = True
-            elif inp in (u'?',):
-                show_help(term)
-                term.inkey()
-                dirty = True
-            else:
-                moved = False
-                for _ in count_repeat():
-                    echo(lightbar.process_keystroke(inp))
-                    moved = lightbar.moved or moved
-                if moved:
-                    echo(statusline(lightbar))
-
-        # edit mode; movement
-        elif edit and (inp in movement or inp.code in movement):
-            dirty = merge()
-            if inp in (u'\r', u'\n') or inp.code == term.KEY_ENTER:
-                lightbar.content.insert(lightbar.index + 1,
-                                        [lightbar.selection[0] + 1, u''])
-                lightbar.move_down()
-                dirty = True
-            ucs = lightbar.process_keystroke(inp)
-            #if lightbar.moved: # XXX optimize redraws
-            echo(term.normal + lneditor.erase_border())
-            echo(ucs)
-            lneditor = get_lneditor(lightbar)
-            save_draft(save_key, get_lbcontent(lightbar))
-            echo(lneditor.border() + lneditor.refresh())
-
-        # edit mode -- append character / backspace
-        elif edit and inp:
-            if (inp in keyset['rubout'] and
-                    len(lneditor.content) == 0 and
-                    lightbar.index > 0):
-                # erase past margin,
-                echo(term.normal + lneditor.erase_border())
-                del lightbar.content[lightbar.index]
-                lightbar.move_up()
-                set_lbcontent(lightbar, get_lbcontent(lightbar))
-                lneditor = get_lneditor(lightbar)
-                dirty = True
-            else:
-                # edit mode, add/delete ch
-                echo(lneditor.process_keystroke(inp))
-                if lneditor.moved:
-                    echo(statusline(lightbar))
-
-        if inp and not inp.isdigit():
-            # commands were processed, reset num_repeat to 1
-            num_repeat = -1
+    session.activity = u'editing {0}'.format(title or save_key or u'text')
+    editor = Editor(text=continue_draft or u'', title=title, quote=quote,
+                    quote_header=quote_header, draft_key=draft_key)
+    try:
+        content = editor.run()
+    except BaseException:
+        # such as a lost connection: keep what was typed.
+        try:
+            editor.autosave(force=True)
+        except Exception:  # pylint: disable=W0703
+            pass
+        raise
+    editor.discard_draft()
+    echo(term.normal + term.clear)
+    if content is False or not save_key:
+        return content
+    session.user[save_key] = content
+    return True

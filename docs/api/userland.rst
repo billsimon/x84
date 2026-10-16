@@ -57,6 +57,13 @@ Userland/scripting API
    :members:
    :show-inheritance:
 
+``x84.bbs.textbuffer``
+----------------------
+
+.. automodule:: x84.bbs.textbuffer
+   :members:
+   :show-inheritance:
+
 ``x84.bbs.userbase``
 --------------------
 

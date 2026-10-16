@@ -280,6 +280,62 @@ def test_modem_bridge_wrong_secret(server):
         time.sleep(0.1)
 
 
+def test_post_and_quote_reply(server):
+    """ Post a message with the editor, then reply quoting it. """
+    screen = signup(server['telnet'], u'poster', u'pass1234')
+    screen.send(u'msg\r')
+    screen.expect(r'subscription tags')
+    screen.send(u'\r')
+    screen.expect(r'ost public')
+
+    # post: recipient (all), subject, body by editor, and tags.
+    screen.send(u'p\r')
+    screen.expect(r'Enter handle')
+    screen.send(u'\r')
+    screen.expect(r'Enter Subject')
+    screen.send(u'hello\r')
+    screen.expect(r'\^Z Save')
+    screen.send(u'first line\rsecond line')
+    screen.send(u'\x1a')
+    screen.expect(r'Enter tags')
+    screen.send(u'\r')
+    screen.expect(r'message sent')
+
+    # read it, and reply quoting its second line.
+    screen.raw = u''
+    screen.expect(r'll \(1\)')
+    screen.send(u'a\r')
+    screen.expect(r'second line')
+    screen.expect(r'eply')
+    screen.send(u'r\r')
+    screen.expect(r'Enter Subject')
+    screen.send(u'\r')
+    screen.expect(r'\^Q Quote')
+    assert u'Re: hello' in screen.text
+    screen.send(u'\x11')
+    screen.expect(r'Enter inserts')
+    screen.send(u'\x1b[B')
+    screen.send(u'\r')
+    screen.send(u'my reply')
+    screen.send(u'\x1a')
+    screen.expect(r'Enter tags')
+    screen.send(u'\r')
+    screen.expect(r'message sent')
+
+    # read the reply.
+    screen.raw = u''
+    screen.expect(r'll \(2\)')
+    screen.send(u'a\r')
+    screen.expect(r'eply')
+    screen.send(u'n\r')
+    screen.expect(r'my reply')
+    assert u'poster wrote:' in screen.text
+    assert u'> second line' in screen.text
+    assert u'> first line' not in screen.text
+    assert u'Traceback' not in server['log']()
+    screen.close()
+
+
 def test_sigterm_shutdown(server):
     """ Must be last: SIGTERM ends the server gracefully. """
     screen = Screen(server['telnet'])
