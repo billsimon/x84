@@ -14,6 +14,7 @@ import dateutil.tz
 MSGDB = 'msgbase'
 TAGDB = 'tags'
 PRIVDB = 'privmsg'
+SENTDB = 'privsent'
 
 # TODO(jquast, maze): Use modeling to construct rfc-compliant mail messaging
 # formats.  It would be possible to use standard mbox-formatted mail boxes,
@@ -74,6 +75,49 @@ def list_privmsgs(handle=None):
         return db_priv.get(handle, set())
     # flatten list of [set(1, 2), set(3, 4)] to set(1, 2, 3, 4)
     return set([_idx for indices in db_priv.values() for _idx in indices])
+
+
+def list_sent(handle):
+    """
+    Return set of indices of private messages sent by given user handle.
+
+    The index of sent messages is kept by :meth:`Msg.save`.  Messages
+    saved before it existed are indexed by their author when first used.
+    """
+    index_sent_privmsgs()
+    return DBProxy(SENTDB).get(handle, set())
+
+
+def index_sent_privmsgs():
+    """ Index existing private messages by author, once. """
+    with DBProxy(SENTDB, table='status') as db_status:
+        if db_status.get('indexed'):
+            return
+        sent = {}
+        for msg in DBProxy(MSGDB).values():
+            if 'public' not in msg.tags and msg.recipient and msg.author:
+                sent.setdefault(msg.author, set()).add(msg.idx)
+        with DBProxy(SENTDB) as db_sent:
+            for handle, indices in sent.items():
+                db_sent[handle] = db_sent.get(handle, set()) | indices
+        db_status['indexed'] = True
+
+
+def remove_privmsg(handle, idx):
+    """ Remove private message ``idx`` from mail received by ``handle``. """
+    with DBProxy(PRIVDB) as db_priv:
+        indices = db_priv.get(handle, set())
+        if idx in indices:
+            db_priv[handle] = indices - set([idx])
+
+
+def remove_sent(handle, idx):
+    """ Remove private message ``idx`` from mail sent by ``handle``. """
+    index_sent_privmsgs()
+    with DBProxy(SENTDB) as db_sent:
+        indices = db_sent.get(handle, set())
+        if idx in indices:
+            db_sent[handle] = indices - set([idx])
 
 
 def list_tags():
@@ -196,11 +240,17 @@ class Msg(object):
                     with DBProxy(MSGDB, use_session=use_session) as db_msg:
                         db_msg['%d' % (self.idx)] = self
 
-        # persist message record to PRIVDB
-        if 'public' not in self.tags:
+        # persist new private message to PRIVDB, by recipient, and SENTDB,
+        # by author.  Only once: a message removed by its recipient or
+        # author is not restored when saved again, such as when replied.
+        if new and 'public' not in self.tags and self.recipient:
             with DBProxy(PRIVDB, use_session=use_session) as db_priv:
                 db_priv[self.recipient] = (
                     db_priv.get(self.recipient, set()) | set([self.idx]))
+            if self.author:
+                with DBProxy(SENTDB, use_session=use_session) as db_sent:
+                    db_sent[self.author] = (
+                        db_sent.get(self.author, set()) | set([self.idx]))
 
         # if either any of 'server_tags' or 'network_tags' are enabled,
         # then queue for potential delivery.
