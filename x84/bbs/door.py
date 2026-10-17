@@ -23,6 +23,39 @@ from x84.bbs.output import echo
 from x84.bbs.ini import get_ini
 from x84.bbs.userbase import list_users
 
+#: directories of the terminfo database searched by ncurses, by default,
+#: after those of the environment variables TERMINFO and TERMINFO_DIRS, and
+#: of ~/.terminfo.
+TERMINFO_DIRS = ('/etc/terminfo', '/lib/terminfo', '/usr/share/terminfo',
+                 '/usr/lib/terminfo', '/usr/local/share/terminfo',
+                 '/usr/share/lib/terminfo')
+
+
+def has_terminfo(kind, env=None):
+    """
+    Whether the terminfo database of this system describes terminal ``kind``.
+
+    The database is searched as ncurses does, for the environment ``env``
+    of a door (``os.environ`` by default).  The caller's terminal may be of
+    a kind known to x/84, which brings its own descriptions, but not to
+    this system, such as 'syncterm': programs using curses then fail.
+    """
+    if not kind or os.sep in kind or kind.startswith('.'):
+        return False
+    env = os.environ if env is None else env
+    dirs = [env.get('TERMINFO', u'')]
+    if env.get('HOME'):
+        dirs.append(os.path.join(env['HOME'], '.terminfo'))
+    dirs.extend(env.get('TERMINFO_DIRS', u'').split(os.pathsep))
+    dirs.extend(TERMINFO_DIRS)
+    for folder in filter(None, dirs):
+        # entries are found by first letter, or (such as on macOS) by its
+        # hexadecimal value.
+        for initial in (kind[0], '{0:02x}'.format(ord(kind[0]))):
+            if os.path.isfile(os.path.join(folder, initial, kind)):
+                return True
+    return False
+
 
 class Dropfile(object):
 
@@ -381,11 +414,12 @@ class Door(object):
 
         self.log = logging.getLogger(__name__)
         self.env = dict(env or {})
+        home = self.env.get('HOME', os.getenv('HOME', '/'))
         self.env.update(
             {'LANG': self.env.get('LANG', 'en_US.UTF-8'),
-             'TERM': self.env.get('TERM', self._term.kind),
+             'TERM': self.env.get('TERM') or self.get_term(home),
              'PATH': self.env.get('PATH', get_ini('door', 'path')),
-             'HOME': self.env.get('HOME', os.getenv('HOME', '/')),
+             'HOME': home,
              'LINES': str(self._term.height),
              'COLUMNS': str(self._term.width),
              })
@@ -394,6 +428,23 @@ class Door(object):
         self._utf8_decoder = codecs.getincrementaldecoder('utf8')(
             errors='replace')
         self.raw = raw
+
+    def get_term(self, home):
+        """
+        Return terminal type of the door, of home directory ``home``.
+
+        That of the session, unless this system's terminfo database does
+        not describe it: then, that of ``[door]`` option ``term_fallback``,
+        ``'ansi'`` by default.
+        """
+        kind = self._term.kind
+        if has_terminfo(kind, {'HOME': home}):
+            return kind
+        fallback = get_ini('door', 'term_fallback') or 'ansi'
+        self.log.info('terminal type {0!r} is not in the terminfo database '
+                      'of this system; the door is given {1!r} instead.'
+                      .format(kind, fallback))
+        return fallback
 
     def run(self):
         """
