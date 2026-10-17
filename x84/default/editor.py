@@ -103,11 +103,15 @@ def is_escape(term, inp):
     Whether keystroke ``inp`` is the escape key.
 
     Escape followed quickly by another key, such as on slow connections,
-    is received as one alt- key, also matched: its second key is
-    ``inp[1:]``.
+    is received as one alt- key (or ctrl-alt- key, of a control key), also
+    matched: its second key is ``inp[1:]``, a string, which may be the
+    escape key, too.
     """
+    if not hasattr(inp, 'is_sequence'):
+        return inp == u'\x1b'
     return (inp.is_sequence and inp.code == term.KEY_ESCAPE or
-            (inp.name or u'').startswith('KEY_ALT_') and inp[:1] == u'\x1b')
+            (inp.name or u'').startswith(('KEY_ALT_', 'KEY_CTRL_ALT_')) and
+            inp[:1] == u'\x1b')
 
 
 def discard_csi(term):
