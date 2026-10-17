@@ -16,14 +16,7 @@ from x84.bbs.msgbase import (
     remove_privmsg,
     remove_sent,
 )
-from tests.screens import (  # noqa: F401 (fixtures)
-    PAUSE,
-    engine,
-    gosub_editor,
-    run_script as run_mail,
-    script,
-    users,
-)
+from tests.screens import PAUSE, gosub_editor, run_script as run_mail
 
 def mail(author, recipient, subject=u'hi', body=u'text', parent=None):
     msg = Msg(recipient=recipient, subject=subject, body=body)

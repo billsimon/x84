@@ -2,12 +2,7 @@
 # local
 from x84.bbs.msgbase import Msg
 from x84.bbs.userbase import get_user
-from tests.screens import (  # noqa: F401 (fixtures)
-    engine,
-    run_script,
-    script,
-    users,
-)
+from tests.screens import run_script
 
 
 def save(author, recipient=None, public=True):

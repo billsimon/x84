@@ -12,6 +12,9 @@ import x84.bbs.session
 import x84.bbs.userbase
 import x84.db
 
+# fixtures of tests of full-screen scripts, for any test.
+from tests.screens import engine, script, users  # noqa: F401
+
 
 @pytest.fixture
 def cfg(tmp_path):

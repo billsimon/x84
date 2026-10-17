@@ -5,14 +5,7 @@ import time
 # local
 from x84.bbs.dbproxy import DBProxy
 from x84.bbs.msgbase import MSGDB, Msg, get_msg, list_msgs
-from tests.screens import (  # noqa: F401 (fixtures)
-    PAUSE,
-    engine,
-    gosub_editor,
-    run_script,
-    script,
-    users,
-)
+from tests.screens import PAUSE, gosub_editor, run_script
 
 DOWN, UP, ESC = u'\x1b[B', u'\x1b[A', u'\x1b'
 
