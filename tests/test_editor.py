@@ -196,3 +196,16 @@ def test_draws_only_ascii(session, editor):
 def test_control_key_at_menu(session, editor):
     result, _ = run_editor(session, editor, [u'a', u'\x1b', PAUSE, SAVE])
     assert result == u'a'
+
+
+def test_escape_escape_combined_returns(session, editor):
+    # escape pressed twice quickly is received as one key, alt-escape: the
+    # menu is opened and closed.
+    result, _ = run_editor(session, editor, [u'a', u'\x1b\x1b', u'b', SAVE])
+    assert result == u'ab'
+
+
+def test_escape_combined_with_control_key(session, editor):
+    # escape followed quickly by ^Z saves.
+    result, _ = run_editor(session, editor, [u'text', u'\x1b\x1a'])
+    assert result == u'text'
