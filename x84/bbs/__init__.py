@@ -21,6 +21,7 @@ from x84.bbs.output import (echo, timeago, encode_pipe, decode_pipe,
 from x84.bbs.pager import Pager
 from x84.bbs.script_def import Script
 from x84.bbs.selector import Selector
+from x84.bbs.textbuffer import TextBuffer
 from x84.bbs.session import (getsession, getterminal,
                              goto, disconnect, gosub,
                              getch,      # deprecated in v2.1
@@ -37,5 +38,5 @@ __all__ = ('list_users', 'get_user', 'find_user', 'User', 'Group', 'list_msgs',
            'goto', 'disconnect', 'getsession', 'getterminal', 'getch', 'gosub',
            'ropen', 'showart', 'Dropfile', 'encode_pipe',
            'decode_pipe', 'syncterm_setfont', 'get_ini', 'send_modem',
-           'recv_modem', 'Script', 'list_privmsgs',
+           'recv_modem', 'Script', 'list_privmsgs', 'TextBuffer',
            )

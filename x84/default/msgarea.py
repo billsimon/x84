@@ -98,6 +98,9 @@ subject_max_length = get_ini(
     section='msg', key='max_subject', getter='getint'
 ) or 40
 
+#: user attribute of message text saved while editing.
+DRAFT_KEY = 'msg_draft'
+
 
 def get_menu(messages):
     """ Return list of menu items by given dict ``messages``. """
@@ -380,7 +383,12 @@ def allow_tag(session, idx):
 
 
 def create_reply_message(session, idx):
-    """ Given a message ``idx``, create and return a replying message. """
+    """
+    Given a message ``idx``, create and return a replying message.
+
+    Its body is empty: the message replied to may be quoted from the
+    editor, see :func:`prompt_body`.
+    """
     parent_msg = get_msg(idx)
     msg = Msg()
     msg.parent = parent_msg.idx
@@ -389,39 +397,21 @@ def create_reply_message(session, idx):
     msg.recipient = parent_msg.author
     msg.author = session.user.handle
 
-    # quote message body
-    msg.body = quote_body(parent_msg)
-
     # duplicate subject and tags
     msg.subject = parent_msg.subject
+    if not msg.subject.lower().startswith(u're:'):
+        msg.subject = u'Re: {0}'.format(msg.subject)[:subject_max_length]
     msg.tags = parent_msg.tags
 
     return msg
 
 
-def quote_body(msg):
-    """ Return quoted body of given message, ``msg``. """
-    # chose a header separator, we iterate through each one, finding any that
-    # may already be used, we use whichever is used least, or the one following
-    # the last used.  The given quotesep_chars is modeled after
-    # reStructuredText.
-    quotesep_len = 60
-    quotesep_chars = u"=-`'~*+^"
-    # assign quotesep_char as quotesep_chars index ([1]) of
-    # lowest-order/fewest uses of quote character([0]).
-    quotesep_char = quotesep_chars[sorted(
-        [(msg.body.count(given_sep * quotesep_len),
-          quotesep_chars.index(given_sep))
-         for given_sep in quotesep_chars])[0][1]]
+def quote_header(msg):
+    """ Return line introducing a quotation of given message, ``msg``. """
     txt_sent = msg.stime.replace(
         tzinfo=dateutil.tz.tzlocal()
     ).astimezone(dateutil.tz.tzutc()).strftime(TIME_FMT)
-    txt_who = u'|13{0}|07'.format(msg.author)
-    return (u'On {txt_sent}, {txt_who} wrote:\r\n'
-            u'{quotesep}\r\n{msg.body}\r\n{quotesep}'
-            .format(txt_sent=txt_sent, txt_who=txt_who,
-                    quotesep=(quotesep_char * quotesep_len),
-                    msg=msg))
+    return u'On {0}, {1} wrote:'.format(txt_sent, msg.author)
 
 
 def display_message(session, term, msg_index, colors):
@@ -860,10 +850,45 @@ def prompt_subject(term, msg, colors):
 
 
 def prompt_body(term, msg, colors):
-    """ Prompt for and set 'body' of message by executing 'editor' script. """
+    """
+    Prompt for and set 'body' of message by executing 'editor' script.
+
+    When ``msg`` is a reply, the message replied to may be quoted.  The
+    text is saved as a draft while editing, and a draft remaining from a
+    lost connection is offered to be continued.
+    """
+    session = getsession()
+    xpos = max(0, (term.width // 2) - (80 // 2))
+    body = msg.body
+    draft = session.user.get(DRAFT_KEY)
+    if draft and not body:
+        echo(u''.join((term.move_x(xpos), term.clear_eol,
+                       u'Continue your unsent message from before? ',
+                       colors['highlight'](u'[yn]'), u' ')))
+        while True:
+            inp = term.inkey()
+            if inp.lower() in (u'y', u'n'):
+                break
+        echo(inp.lower() + u'\r\n')
+        if inp.lower() == u'y':
+            body = draft
+
+    quote = header = None
+    if msg.parent is not None:
+        try:
+            parent_msg = get_msg(msg.parent)
+        except KeyError:
+            pass
+        else:
+            quote, header = parent_msg.body, quote_header(parent_msg)
+
+    title = u'{0}To: {1}'.format(
+        u'{0}  '.format(msg.subject) if msg.subject else u'',
+        msg.recipient or u'All')
     with term.fullscreen():
-        content = gosub('editor', save_key=None,
-                        continue_draft=msg.body)
+        content = gosub('editor', save_key=None, continue_draft=body,
+                        title=title, quote=quote, quote_header=header,
+                        draft_key=DRAFT_KEY)
     # set syncterm font, if any
     if term.kind.startswith('ansi'):
         echo(syncterm_setfont(syncterm_font))
@@ -871,7 +896,6 @@ def prompt_body(term, msg, colors):
     if content and content.strip():
         msg.body = content
         return True
-    xpos = max(0, (term.width // 2) - (80 // 2))
     echo(u''.join((term.move_x(xpos),
                    colors['highlight']('Message canceled.'),
                    term.clear_eol)))
