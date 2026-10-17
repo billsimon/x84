@@ -336,6 +336,51 @@ def test_post_and_quote_reply(server):
     screen.close()
 
 
+def login(port, handle, password):
+    screen = Screen(port)
+    screen.expect(r'Login:')
+    screen.send(handle + u'\r')
+    screen.expect(r'Password')
+    screen.send(password + u'\r')
+    screen.expect(r'quick login', timeout=30)
+    screen.send(u'y\r')
+    screen.expect(r'logoff system', timeout=30)
+    return screen
+
+
+def test_private_mail(server):
+    """ Mail is sent by one user, and read by another. """
+    signup(server['telnet'], u'marty', u'pass1234').close()
+    screen = signup(server['telnet'], u'doc', u'pass1234')
+    screen.send(u'mail\r')
+    screen.expect(r'No messages')
+    screen.send(u'w')
+    screen.expect(r'To:')
+    screen.send(u'marty\r')
+    screen.expect(r'Subject:')
+    screen.send(u'flux\r')
+    screen.expect(r'\^Z Save')
+    screen.send(u'1.21 gigawatts')
+    screen.send(u'\x1a')
+    screen.expect(r'Sent to marty')
+    screen.send(u'q')
+    screen.expect(r'logoff system')
+    screen.close()
+
+    screen = login(server['telnet'], u'marty', u'pass1234')
+    screen.raw = u''
+    screen.send(u'mail\r')
+    screen.expect(r'Inbox, 1 new')
+    screen.expect(r'flux')
+    screen.send(u'\r')
+    screen.expect(r'1\.21 gigawatts')
+    screen.send(u'q')
+    screen.send(u'q')
+    screen.expect(r'logoff system')
+    assert u'Traceback' not in server['log']()
+    screen.close()
+
+
 def test_sigterm_shutdown(server):
     """ Must be last: SIGTERM ends the server gracefully. """
     screen = Screen(server['telnet'])

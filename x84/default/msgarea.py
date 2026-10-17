@@ -115,10 +115,9 @@ def get_menu(messages):
         items.append(
             MenuItem(u'a', u'all ({0})'.format(len(messages['all'])))
         )
-    if messages['private']:
-        items.append(
-            MenuItem(u'v', u'private ({0})'.format(len(messages['private'])))
-        )
+    items.append(MenuItem(u'v', u'private mail{0}'.format(
+        u' ({0} new)'.format(len(messages['new_private']))
+        if messages['new_private'] else u'')))
     items.extend([
         MenuItem(u'p', u'post public'),
         MenuItem(u'w', u'write private'),
@@ -155,11 +154,12 @@ def get_messages_by_subscription(session, subscription):
         messages_bytag[tag_pattern]['new'] = (
             messages_bytag[tag_pattern]['all'] - messages_read)
 
-    # and make a list of only our own
+    # and make a list of only our own, read by the 'mail' script.
     messages['private'] = list_privmsgs(session.user.handle)
+    messages['new_private'] = messages['private'] - messages_read
 
     # and calculate 'new' messages
-    messages['new'] = (messages['all'] | messages['private']) - messages_read
+    messages['new'] = messages['all'] - messages_read
 
     return messages, messages_bytag
 
@@ -486,10 +486,11 @@ def delete_message(msg):
                 else:
                     # no more messages by this tag, delete it
                     del tag_db[key]
-    with DBProxy('privmsg') as priv_db:
-        for key, values in priv_db.items():
-            if msg.idx in values:
-                priv_db[key] = values - set([msg.idx])
+    for schema in ('privmsg', 'privsent'):
+        with DBProxy(schema) as priv_db:
+            for key, values in priv_db.items():
+                if msg.idx in values:
+                    priv_db[key] = values - set([msg.idx])
     with DBProxy('msgbase') as msg_db:
         del msg_db['%d' % int(msg.idx)]
 
@@ -659,7 +660,7 @@ def main(quick=False):
 
             # When quick login ('y') selected in top.py, return immediately
             # when no new messages are matched any longer.
-            if quick and not messages['new']:
+            if quick and not (messages['new'] or messages['new_private']):
                 echo(term.move_x(xloc) + u'\r\nNo new messages.\r\n')
                 return waitprompt(term)
 
@@ -691,7 +692,8 @@ def main(quick=False):
             session.flush_event('newmsg')
             nxt_msgs, nxt_bytags = get_messages_by_subscription(
                 session, subscription)
-            if nxt_msgs['new'] - messages['new']:
+            if (nxt_msgs['new'] - messages['new'] or
+                    nxt_msgs['new_private'] - messages['new_private']):
                 # beep and re-display when a new message has arrived.
                 echo(u'\a')
                 messages, messages_bytags = nxt_msgs, nxt_bytags
@@ -710,12 +712,11 @@ def main(quick=False):
                 continue
 
             inp = given_inp.strip()
-            if inp.lower() in (u'n', 'a', 'v'):
-                # read new/all/private messages
+            if inp.lower() in (u'n', 'a'):
+                # read new/all messages
                 message_indices = sorted(list(
                     {'n': messages['new'],
                      'a': messages['all'],
-                     'v': messages['private'],
                      }[inp.lower()]))
                 if message_indices:
                     dirty = 2
@@ -726,22 +727,24 @@ def main(quick=False):
                 # mark all messages as read
                 dirty = 1
                 do_mark_as_read(session, messages['new'])
-            elif inp.lower() in (u'p', u'w'):
-                # write new public/private message
+            elif inp.lower() in (u'v', u'w'):
+                # private mail
                 dirty = 2
-                public = bool(inp.lower() == u'p')
+                gosub('mail', write=inp.lower() == u'w')
+            elif inp.lower() == u'p':
+                # write new public message
+                dirty = 2
                 msg = Msg()
                 if (
                         not prompt_recipient(
-                            term=term, msg=msg,
-                            colors=colors, public=public
+                            term=term, msg=msg, colors=colors
                         ) or not prompt_subject(
                             term=term, msg=msg, colors=colors
                         ) or not prompt_body(
                             term=term, msg=msg, colors=colors
                         ) or not prompt_tags(
                             session=session, term=term, msg=msg,
-                            colors=colors, public=public
+                            colors=colors
                         )):
                     continue
                 do_send_message(session=session, term=term,
@@ -944,6 +947,10 @@ def prompt_tags(session, term, msg, colors, public=True):
             return False
 
         msg.tags = set(tag.strip() for tag in inp.split(',') if tag.strip())
+        # and enforce it again, should it have been removed: a public
+        # message without it is displayed to no one.
+        if public:
+            msg.tags.add('public')
         if moderated and not (tag_moderators & session.user.groups):
             cannot_tag = [_tag for _tag in msg.tags if _tag not in all_tags]
             if cannot_tag:

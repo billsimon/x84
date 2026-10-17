@@ -167,6 +167,10 @@ def get_menu_items(session):
                  text=u'message area',
                  script='msgarea',
                  args=(), kwargs={}),
+        MenuItem(inp_key=u'mail',
+                 text=u'private mail',
+                 script='mail',
+                 args=(), kwargs={}),
 
         MenuItem(inp_key=u'g',
                  text=u'logoff system',
