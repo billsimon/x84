@@ -206,6 +206,9 @@ def init_bbs_ini():
     # default path if cmd argument is not absolute,
     cfg_bbs.add_section('door')
     cfg_bbs.set('door', 'path', '/usr/local/bin:/usr/games')
+    # terminal type given to doors when this system's terminfo database
+    # does not describe the caller's, such as 'syncterm'.
+    cfg_bbs.set('door', 'term_fallback', 'ansi')
 
     cfg_bbs.add_section('matrix')
     cfg_bbs.set('matrix', 'newcmds', 'new, apply')
