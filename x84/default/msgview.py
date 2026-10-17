@@ -42,14 +42,25 @@ subject_max_length = get_ini(
     section='msg', key='max_subject', getter='getint'
 ) or 40
 
+#: spaces between the name and subject columns of message lists.
+GAP = 3
+
 #: default colors, by name of terminal capability.
 DEFAULT_COLORS = {
     'text': 'normal',
     'unread': 'bold',
     'bar': 'bold_white_on_blue',
     'select': 'reverse',
-    'header': 'bold',
+    'header': 'bold_magenta',
     'quote': 'bold_cyan',
+    # columns of the message list, and of its unread messages.
+    'flag': 'bold_red',
+    'author': 'cyan',
+    'author_unread': 'bold_cyan',
+    'subject': 'normal',
+    'subject_unread': 'bold_white',
+    'date': 'green',
+    'date_unread': 'bold_green',
 }
 
 #: color sequences, as decoded from pipe codes of message text.
@@ -164,8 +175,43 @@ class MessageScreen(object):
         result = self.term.move(yloc, text_width(text[:same]))
         if text[same:]:
             result += self.colors[style](text[same:])
-        if prior is None or prior_style == 'raw' or (
+        if prior is None or prior_style in ('raw', 'columns') or (
                 text_width(prior) > text_width(text)):
+            result += self.term.normal + self.term.clear_eol
+        return result
+
+    def draw_columns(self, yloc, columns):
+        """
+        Return sequence to display ``columns`` at row ``yloc``.
+
+        ``columns`` is a sequence of (style, text) pairs, displayed side by
+        side.  Only the columns from the first that differs from what is
+        already displayed there are written.
+        """
+        fitted, width = [], self.width - 1
+        for style, text in columns:
+            text = displayable(text, width)
+            width -= text_width(text)
+            fitted.append((style, text))
+        columns = tuple(fitted)
+        prior_style, prior = self.screen.get(yloc, (None, None))
+        if (prior_style, prior) == ('columns', columns):
+            return u''
+        self.screen[yloc] = ('columns', columns)
+        same = 0
+        if prior_style == 'columns':
+            while (same < min(len(prior), len(columns)) and
+                   prior[same] == columns[same]):
+                same += 1
+        xloc = sum(text_width(text) for _, text in columns[:same])
+        result = self.term.move(yloc, xloc) + u''.join(
+            self.colors[style](text) for style, text in columns[same:])
+        shown = (sum(text_width(text) for _, text in prior)
+                 if prior_style == 'columns' else
+                 text_width(prior) if prior_style not in (None, 'raw')
+                 else None)
+        if shown is None or shown > xloc + sum(
+                text_width(text) for _, text in columns[same:]):
             result += self.term.normal + self.term.clear_eol
         return result
 
@@ -300,11 +346,14 @@ class MessageScreen(object):
         return u''
 
     def list_row(self, msg):
-        """ Return text of list row of ``msg``. """
+        """
+        Return text of list row of ``msg``, or its columns, a list of
+        (style, text) pairs.
+        """
         raise NotImplementedError
 
     def list_style(self, msg):
-        """ Return display style of list row of ``msg``. """
+        """ Return display style of list row of ``msg``, of text. """
         return 'text'
 
     def list_hints(self):
@@ -336,8 +385,15 @@ class MessageScreen(object):
             if idx < len(self.entries):
                 msg = self.entries[idx]
                 text = self.list_row(msg)
-                style = ('select' if idx == self.index else
-                         self.list_style(msg))
+                if idx == self.index:
+                    style = 'select'
+                    if not isinstance(text, str):
+                        text = u''.join(column for _, column in text)
+                elif not isinstance(text, str):
+                    output.append(self.draw_columns(2 + yloc, text))
+                    continue
+                else:
+                    style = self.list_style(msg)
             elif idx == 0:
                 text = self.list_empty()
             output.append(self.draw_row(2 + yloc, style, text))

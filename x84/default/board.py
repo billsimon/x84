@@ -14,7 +14,11 @@ attribute ``readmsgs``, shared with the message area and mail.  Like the
 editor, the board draws only ASCII, so that it displays the same for
 utf8 and cp437 terminals.  Its colors may be changed in section
 ``[board]`` of the configuration: ``color_text``, ``color_unread``,
-``color_bar``, ``color_select``, ``color_header`` and ``color_quote``.
+``color_bar``, ``color_select``, ``color_header`` and ``color_quote``,
+and of the list's columns: ``color_flag``, ``color_author``,
+``color_subject`` and ``color_date``, and of unread messages,
+``color_author_unread``, ``color_subject_unread`` and
+``color_date_unread``.
 """
 # std imports
 import collections
@@ -36,6 +40,7 @@ from x84.bbs import (
 )
 from x84.bbs.msgbase import list_privmsgs
 from msgview import (
+    GAP,
     MessageScreen,
     TagPicker,
     pad,
@@ -263,10 +268,10 @@ class Board(MessageScreen):
         width = self.width - 1
         name = max(4, username_max_length)
         date = 10
-        subject = width - 2 - name - 1 - 1 - date
+        subject = width - 2 - name - GAP - 1 - date
         if subject < 10:
             date = 0
-            subject = width - 2 - name - 1
+            subject = width - 2 - name - GAP
         return name, max(0, subject), date
 
     def list_title(self):
@@ -279,8 +284,8 @@ class Board(MessageScreen):
 
     def list_header(self):
         name, subject, date = self.list_columns()
-        text = u'  {0} {1}'.format(pad(u'From', name),
-                                   pad(u'Subject', subject))
+        text = u'  {0}{1}{2}'.format(pad(u'From', name), u' ' * GAP,
+                                     pad(u'Subject', subject))
         if date:
             text += u' ' + pad(u'Date', date)
         return text
@@ -288,13 +293,16 @@ class Board(MessageScreen):
     def list_row(self, msg):
         name, subject, date = self.list_columns()
         indent = u'  ' * min(MAX_DEPTH, self.depth.get(msg.idx, 0))
-        text = u'{0} {1} {2}'.format(
-            u'N' if self.is_unread(msg) else u' ',
-            pad(msg.author or u'', name),
-            pad(indent + (msg.subject or u'(no subject)'), subject))
+        unread = u'_unread' if self.is_unread(msg) else u''
+        columns = [
+            ('flag', u'N ' if unread else u'  '),
+            ('author' + unread, pad(msg.author or u'', name) + u' ' * GAP),
+            ('subject' + unread,
+             pad(indent + (msg.subject or u'(no subject)'), subject))]
         if date:
-            text += u' ' + msg.stime.strftime('%Y-%m-%d')
-        return text
+            columns.append(('date' + unread,
+                            u' ' + msg.stime.strftime('%Y-%m-%d')))
+        return columns
 
     def list_style(self, msg):
         return 'unread' if self.is_unread(msg) else 'text'

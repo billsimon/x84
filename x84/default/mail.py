@@ -13,7 +13,11 @@ read, replied, forwarded or deleted from either the list or the reader.
 Like the editor, mail draws only ASCII, so that it displays the same for
 utf8 and cp437 terminals.  Its colors may be changed in section
 ``[mail]`` of the configuration: ``color_text``, ``color_unread``,
-``color_bar``, ``color_select``, ``color_header`` and ``color_quote``.
+``color_bar``, ``color_select``, ``color_header`` and ``color_quote``,
+and of the list's columns: ``color_flag``, ``color_author``,
+``color_subject`` and ``color_date``, and of unread messages,
+``color_author_unread``, ``color_subject_unread`` and
+``color_date_unread``.
 """
 # local
 from x84.bbs import getsession, getterminal, find_user, get_msg, gosub, echo
@@ -26,6 +30,7 @@ from x84.bbs.msgbase import (
 )
 from editor import displayable
 from msgview import (
+    GAP,
     MessageScreen,
     format_date,
     pad,
@@ -164,10 +169,10 @@ class Mail(MessageScreen):
         width = self.width - 1
         name = max(4, username_max_length)
         date = 10
-        subject = width - 2 - name - 1 - 1 - date
+        subject = width - 2 - name - GAP - 1 - date
         if subject < 10:
             date = 0
-            subject = width - 2 - name - 1
+            subject = width - 2 - name - GAP
         return name, max(0, subject), date
 
     def list_title(self):
@@ -179,24 +184,28 @@ class Mail(MessageScreen):
 
     def list_header(self):
         name, subject, date = self.list_columns()
-        text = u'  {0} {1}'.format(
+        text = u'  {0}{1}{2}'.format(
             pad(u'From' if self.folder == u'inbox' else u'To', name),
-            pad(u'Subject', subject))
+            u' ' * GAP, pad(u'Subject', subject))
         if date:
             text += u' ' + pad(u'Date', date)
         return text
 
     def list_row(self, msg):
         name, subject, date = self.list_columns()
-        flag = (u'N' if self.is_unread(msg) else
+        unread = u'_unread' if self.is_unread(msg) else u''
+        flag = (u'N' if unread else
                 u'R' if msg.idx in self.replied else u' ')
         who = msg.author if self.folder == u'inbox' else msg.recipient
-        text = u'{0} {1} {2}'.format(flag, pad(who or u'', name),
-                                     pad(msg.subject or u'(no subject)',
-                                         subject))
+        columns = [
+            ('flag', flag + u' '),
+            ('author' + unread, pad(who or u'', name) + u' ' * GAP),
+            ('subject' + unread, pad(msg.subject or u'(no subject)',
+                                     subject))]
         if date:
-            text += u' ' + msg.stime.strftime('%Y-%m-%d')
-        return text
+            columns.append(('date' + unread,
+                            u' ' + msg.stime.strftime('%Y-%m-%d')))
+        return columns
 
     def list_style(self, msg):
         return 'unread' if self.is_unread(msg) else 'text'

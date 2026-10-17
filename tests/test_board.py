@@ -248,3 +248,21 @@ def test_draws_only_ascii(users, engine, script):
         output = output.replace(typed, u'')
     assert all(ord(ucs) < 128 for ucs in output), [
         ucs for ucs in output if ord(ucs) >= 128]
+
+
+def test_list_columns_colored(users, engine, script, session):
+    board = script('board')
+    unread = post(u'biff', u'one')
+    read = post(u'doc', u'two')
+    post(u'marty', u'three')
+    session.session.user['readmsgs'] = {read.idx}
+    output = run_script(engine, board, [u'q'])
+    # 'three', the newest, is selected; of the others, the unread author is
+    # bright, and three spaces part the author and subject columns.
+    name = max(4, board.username_max_length)
+    bold_cyan, cyan = u'\x1b[1m\x1b[36m', u'\x1b[36m'
+    assert (bold_cyan + u'biff' + u' ' * (name - 4 + 3) + u'\x1b[m' +
+            u'\x1b[1m\x1b[37mone') in output
+    assert cyan + u'doc' + u' ' * (name - 3 + 3) + u'\x1b[m' in output
+    assert u'From' + u' ' * (name - 4 + 3) + u'Subject' in output
+    assert unread.idx not in session.session.user['readmsgs']
