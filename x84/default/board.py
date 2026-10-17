@@ -29,6 +29,7 @@ from x84.bbs import (
     getsession,
     getterminal,
     find_user,
+    get_user,
     list_tags,
     list_msgs,
     get_ini,
@@ -412,7 +413,7 @@ class Board(MessageScreen):
 
     def change_subscription(self):
         """ Choose tags subscribed to. """
-        result = choose_subscription(self.session, self.subscription)
+        result = choose_subscription(self.session.user, self.subscription)
         self.clear()
         if result is not None:
             self.subscription = result
@@ -530,9 +531,9 @@ class Board(MessageScreen):
         return content
 
 
-def choose_subscription(session, subscription):
+def choose_subscription(user, subscription):
     """
-    Choose tags subscribed to, saving and returning them.
+    Choose tags subscribed to by ``user``, saving and returning them.
 
     Returns None when canceled.
     """
@@ -553,13 +554,13 @@ def choose_subscription(session, subscription):
         if result is None:
             return None
         if result:
-            session.user['msg_subscription'] = result
+            user['msg_subscription'] = result
             return result
         subscription = []
         notice = u'Choose at least one tag, or * for all.'
 
 
-def main(new_only=False, post=False, subscribe=False):
+def main(new_only=False, post=False, subscribe=False, handle=None):
     """
     Main procedure.
 
@@ -567,6 +568,8 @@ def main(new_only=False, post=False, subscribe=False):
     :param bool post: post a new message, then list messages.
     :param bool subscribe: choose tags subscribed to, and return them
         (or None, when canceled).
+    :param str handle: user whose tags are chosen, when subscribing, such
+        as by a sysop's profile editor; the session user by default.
     """
     session, term = getsession(), getterminal()
     session.activity = u'reading messages'
@@ -574,8 +577,9 @@ def main(new_only=False, post=False, subscribe=False):
     with term.fullscreen():
         if subscribe:
             session.activity = u'choosing tags'
+            user = get_user(handle) if handle else session.user
             result = choose_subscription(
-                session, session.user.get('msg_subscription'))
+                user, user.get('msg_subscription'))
         elif post:
             # once posted, the message is displayed among the others.
             session.activity = u'posting a message'

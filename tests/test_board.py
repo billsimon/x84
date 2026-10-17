@@ -266,3 +266,12 @@ def test_list_columns_colored(users, engine, script, session):
     assert cyan + u'doc' + u' ' * (name - 3 + 3) + u'\x1b[m' in output
     assert u'From' + u' ' * (name - 4 + 3) + u'Subject' in output
     assert unread.idx not in session.session.user['readmsgs']
+
+
+def test_subscription_of_another_user(users, engine, script, session):
+    post(u'biff', u'one')
+    run_script(engine, script('board'), [u'\r'], subscribe=True,
+               handle=u'doc')
+    from x84.bbs.userbase import get_user
+    assert get_user(u'doc')['msg_subscription'] == [u'*']
+    assert session.session.user.get('msg_subscription') is None
