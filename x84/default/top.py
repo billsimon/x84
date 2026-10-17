@@ -185,6 +185,11 @@ def login(session, user):
     """
     session.user = user
 
+    # assign character set preference, chosen by the profile editor;
+    # otherwise, that detected when connecting is kept.
+    if user.get('charset') in ('utf8', 'cp437'):
+        session.encoding = user.get('charset')
+
     # assign timeout preference
     timeout = session.user.get('timeout', None)
     if timeout is not None:
@@ -294,7 +299,10 @@ def main(handle=None):
     coerce_terminal_encoding(term, session.encoding)
 
     # fetch user record and register, or "log" call
+    detected = session.encoding
     login(session, get_user_record(handle))
+    if session.encoding != detected:
+        coerce_terminal_encoding(term, session.encoding)
 
     # display art and prompt for quick login
     quick = do_intro_art(term, session)

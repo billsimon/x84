@@ -2,6 +2,12 @@
 User profile editor script for x/84.
 
 This script is closely coupled with, and dependent upon nua.py.
+
+Besides the account fields of nua.py, a user may choose their character
+set, applied at login (user attribute ``charset``: ``'utf8'`` or
+``'cp437'``, otherwise detected), tags subscribed to (by the board),
+weather location (by the weather script) and temperature units, and
+expert mode, which skips some help text and pauses.
 """
 # std imports
 import collections
@@ -11,11 +17,12 @@ import time
 
 # bbs
 from x84.bbs import getterminal, getsession, echo, timeago, get_ini, goto
-from x84.bbs import list_users, find_user, get_user
+from x84.bbs import list_users, find_user, get_user, gosub, DBProxy
 from x84.bbs import LineEditor, ScrollingEditor
+from x84.bbs.msgbase import MSGDB, list_sent
 
 # local
-from common import display_banner
+from common import display_banner, coerce_terminal_encoding
 import nua
 
 #: lowlight color -- brackets ``[]``, and colon, ``:``
@@ -40,6 +47,15 @@ color_field_edit = get_ini(
 
 Point = collections.namedtuple('Point', ['y', 'x'])
 
+#: character sets a user may choose, 'auto' as detected when connecting.
+CHARSETS = (u'auto', u'utf8', u'cp437')
+
+#: fields toggled, or cycled, by their key, rather than edited.
+TOGGLES = ('charset', 'units', 'expert')
+
+#: fields edited by another script, by name of script.
+SCRIPTS = {'tags': 'board', 'weather': 'weather'}
+
 field = collections.namedtuple('input_validation', [
     # field's value
     'value',
@@ -60,8 +76,39 @@ field = collections.namedtuple('input_validation', [
 ])
 
 
-def get_display_fields(user, point):
-    """ Return OrderedDict of display fields. """
+def get_charset(user):
+    """ Return character set chosen by ``user``, one of :data:`CHARSETS`. """
+    charset = user.get('charset')
+    return charset if charset in CHARSETS else u'auto'
+
+
+def count_messages(handle):
+    """ Return number of public messages and of mail sent by ``handle``. """
+    posts = sum(1 for msg in DBProxy(MSGDB).values()
+                if msg.author == handle and 'public' in msg.tags)
+    return posts, len(list_sent(handle))
+
+
+def weather_location(user):
+    """ Return name of weather location of ``user``, as 'city, state'. """
+    location = user.get('location')
+    if not isinstance(location, dict):
+        return u''
+    return u', '.join(_part for _part in (
+        location.get('city', u''), location.get('state', u'')) if _part)
+
+
+def get_display_fields(user, point, counts=(0, 0), is_sysop=False, gap=2):
+    """
+    Return OrderedDict of display fields.
+
+    ``counts`` are the numbers of messages posted and mail sent by
+    ``user``, and only sysops (``is_sysop``) may edit groups.  Rows of
+    editable fields are ``gap`` rows apart.
+    """
+    def row(num):
+        return point.y + 3 + gap * num
+
     # reference the description text fields from nua.py
     # for their same purpose here.
     descriptions = {
@@ -70,9 +117,11 @@ def get_display_fields(user, point):
 
     fields = collections.OrderedDict()
     _indent = point.x + 4 + nua.username_max_length
+    # editable fields of the right column.
+    _right = point.x + 44
     # user: <name> last called 10m ago
     #              from ssh-127.0.0.1:65534
-    #              1 calls, 1 posts
+    #              1 calls, 1 posts, 1 mail sent
     fields['user'] = field(
         value=user.handle,
         field_fmt=u'{rb}{value}{lb}',
@@ -103,8 +152,8 @@ def get_display_fields(user, point):
         key=None, width=None, validate_fn=None, description=None,
     )
     fields['posts'] = field(
-        value=str(user.get('msgs_sent', 0)),
-        field_fmt=u'{value} posts',
+        value=u'{0} posts, {1} mail sent'.format(*counts),
+        field_fmt=u'{value}',
         display_location=Point(y=point.y + 2,
                                x=_indent + len('1999 calls') + 1),
         edit_location=Point(None, None),
@@ -119,32 +168,32 @@ def get_display_fields(user, point):
     fields['password'] = field(
         value=_password,
         field_fmt=u'{lb}{key}{rb}assword{colon} {value}',
-        display_location=Point(y=point.y + 5, x=point.x),
-        edit_location=Point(y=point.y + 5, x=point.x + 12),
+        display_location=Point(y=row(1), x=point.x),
+        edit_location=Point(y=row(1), x=point.x + 12),
         key=u'p', width=nua.password_max_length,
         validate_fn=nua.validate_password, description=None,
     )
     fields['location'] = field(
         value=user.location,
         field_fmt=u'{lb}{key}{rb}rigin{colon}   {value}',
-        display_location=Point(y=point.y + 7, x=point.x),
-        edit_location=Point(y=point.y + 7, x=point.x + 12),
+        display_location=Point(y=row(2), x=point.x),
+        edit_location=Point(y=row(2), x=point.x + 12),
         key=u'o', width=nua.location_max_length,
         validate_fn=None, description=descriptions.get('location'),
     )
     fields['email'] = field(
         value=user.email,
         field_fmt=u'{lb}{key}{rb}mail{colon}    {value}',
-        display_location=Point(y=point.y + 9, x=point.x),
-        edit_location=Point(y=point.y + 9, x=point.x + 12),
+        display_location=Point(y=row(3), x=point.x),
+        edit_location=Point(y=row(3), x=point.x + 12),
         key=u'e', width=nua.email_max_length,
         validate_fn=None, description=descriptions.get('email'),
     )
     fields['timeout'] = field(
         value=str(user.get('timeout', 'no')),
         field_fmt=u'{lb}{key}{rb}dle off{colon} {value}',
-        display_location=Point(y=point.y + 11, x=point.x),
-        edit_location=Point(y=point.y + 11, x=point.x + 12),
+        display_location=Point(y=row(4), x=point.x),
+        edit_location=Point(y=row(4), x=point.x + 12),
         key=u'i', width=5,
         # XXX
         validate_fn=None,
@@ -153,10 +202,10 @@ def get_display_fields(user, point):
     )
     fields['pubkey'] = field(
         value=user.get('pubkey') or 'no',
-        field_fmt=u'{lb}{key}{rb}sh-key{colon}  {value}',
-        display_location=Point(y=point.y + 11, x=point.x + 19),
-        edit_location=Point(y=point.y + 11, x=point.x + 31),
-        key=u's', width=20,
+        field_fmt=u'{lb}{key}{rb}sh-key{colon} {value}',
+        display_location=Point(y=row(4), x=_right),
+        edit_location=Point(y=row(4), x=_right + 11),
+        key=u's', width=14,
         # XXX
         validate_fn=None,
         description=(u"Place your OpenSSH-compatible ssh public key into your "
@@ -166,16 +215,79 @@ def get_display_fields(user, point):
     )
     fields['groups'] = field(
         value=','.join(user.groups),
-        field_fmt=u'{lb}{key}{rb}roups{colon}   {value}',
-        display_location=Point(y=point.y + 13, x=point.x),
-        edit_location=Point(y=point.y + 13, x=point.x + 12),
-        key=u'g', width=30,
+        field_fmt=(u'{lb}{key}{rb}roups{colon}   {value}' if is_sysop
+                   else u'groups{colon}     {value}'),
+        display_location=Point(y=row(5), x=point.x),
+        edit_location=Point(y=row(5), x=point.x + 12),
+        key=u'g' if is_sysop else None, width=30,
         validate_fn=None,
         description=(u"Groups this user is a member of, separated by comma.  "
                      u"Notably, group 'sysop' has system-wide access, and "
                      u"group 'moderator' is able to moderate messages. "),
     )
+    fields['charset'] = field(
+        value=get_charset(user),
+        field_fmt=u'{lb}{key}{rb}harset{colon} {value}',
+        display_location=Point(y=row(1), x=_right),
+        edit_location=Point(None, None),
+        key=u'c', width=5, validate_fn=None, description=None,
+    )
+    subscription = user.get('msg_subscription') or []
+    fields['tags'] = field(
+        value=u', '.join(sorted(subscription) if isinstance(
+            subscription, set) else subscription) or u'none',
+        field_fmt=u'{lb}{key}{rb}ags{colon}    {value}',
+        display_location=Point(y=row(2), x=_right),
+        edit_location=Point(None, None),
+        key=u't', width=14, validate_fn=None, description=None,
+    )
+    fields['weather'] = field(
+        value=weather_location(user) or u'none',
+        field_fmt=u'{lb}{key}{rb}eather{colon} {value}',
+        display_location=Point(y=row(3), x=_right),
+        edit_location=Point(None, None),
+        key=u'w', width=14, validate_fn=None, description=None,
+    )
+    fields['units'] = field(
+        value=u'C' if user.get('centigrade') else u'F',
+        field_fmt=u'{lb}{key}{rb}nits{colon} {value}',
+        display_location=Point(y=row(5), x=_right),
+        edit_location=Point(None, None),
+        key=u'u', width=1, validate_fn=None, description=None,
+    )
+    fields['expert'] = field(
+        value=u'yes' if user.get('expert') else u'no',
+        field_fmt=u'e{lb}{key}{rb}pert{colon} {value}',
+        display_location=Point(y=row(5), x=_right + 11),
+        edit_location=Point(None, None),
+        key=u'x', width=3, validate_fn=None, description=None,
+    )
     return fields
+
+
+def toggle(term, session, field_name, tgt_user):
+    """
+    Toggle, or cycle, value of field ``field_name`` of ``tgt_user``.
+
+    A character set chosen by the session user is applied at once, and
+    True returned, as the screen must be redrawn.
+    """
+    if field_name == 'charset':
+        charset = CHARSETS[
+            (CHARSETS.index(get_charset(tgt_user)) + 1) % len(CHARSETS)]
+        if charset == u'auto':
+            del tgt_user['charset']
+        else:
+            tgt_user['charset'] = charset
+            if tgt_user.handle == session.user.handle:
+                session.encoding = charset
+                coerce_terminal_encoding(term, charset)
+                return True
+    elif field_name == 'units':
+        tgt_user['centigrade'] = not tgt_user.get('centigrade', False)
+    elif field_name == 'expert':
+        tgt_user['expert'] = not tgt_user.get('expert', False)
+    return False
 
 
 def show_banner(term):
@@ -206,8 +318,12 @@ def display_options(term, fields):
         # trim and padd field-value to maximum length,
         _align = term.center if field_name == 'user' else term.ljust
         _value = (
-            # field value is greater than field width, trim to size
-            u'.. ' + field.value[-(field.width - len(u'.. ')):]
+            # field value is greater than field width, trim to size: names
+            # keep their start, other values (such as keys) their end.
+            field.value[:field.width - len(u'..')] + u'..'
+            if field.width and term.length(field.value) > field.width
+            and field_name in ('tags', 'weather')
+            else u'.. ' + field.value[-(field.width - len(u'.. ')):]
             if field.width and term.length(field.value) > field.width
             # left-adjust string to length of field, except for user,
             # which is always centered
@@ -277,7 +393,12 @@ def display_prompt(term, session, point):
 
 
 def do_command(term, session, inp, fields, tgt_user, point):
-    """ Perform action by given input. """
+    """
+    Perform action by given input.
+
+    Returns False when ``inp`` is not a command, -1 when the screen must
+    be redrawn entirely, and True otherwise.
+    """
     _color1, _color2, _color3 = [
         getattr(term, _color) for _color in (
             color_lowlight, color_highlight, color_field_edit)]
@@ -296,6 +417,25 @@ def do_command(term, session, inp, fields, tgt_user, point):
     # only 'sysop' may edit user groups
     if field_name == 'groups' and not session.user.is_sysop:
         return False
+
+    if tgt_user.handle == 'anonymous' and field_name in (
+            TOGGLES + tuple(SCRIPTS)):
+        # anonymous has no preferences to keep.
+        return False
+
+    if field_name in TOGGLES:
+        return -1 if toggle(term, session, field_name, tgt_user) else True
+
+    if field_name == 'tags':
+        gosub('board', subscribe=True, handle=tgt_user.handle)
+        return -1
+
+    if field_name == 'weather':
+        # the weather script saves the location of the session user only.
+        if tgt_user.handle != session.user.handle:
+            return False
+        gosub('weather')
+        return -1
 
     # pylint: disable=W0631
     #         Using possibly undefined loop variable 'field'
@@ -504,6 +644,7 @@ def main(handle=None):
     session, term = getsession(), getterminal()
     tgt_user = get_user(handle) if handle else session.user
     legal_input_characters = string.ascii_letters + u'<>'
+    counts = (None, None)
 
     # re-display entire screen on loop,
     while True:
@@ -514,11 +655,20 @@ def main(handle=None):
             # display banner, discover (y,x) point after,
             point_margin = show_banner(term)
 
-            # forward-calculate the prompt (y,x) point
-            point_prompt = Point(y=point_margin.y + 15, x=point_margin.x)
+            # forward-calculate the prompt (y,x) point, below 5 rows of
+            # editable fields, spaced apart when the screen is tall enough.
+            gap = 2 if point_margin.y + 3 + 2 * 5 + 4 < term.height else 1
+            point_prompt = Point(y=point_margin.y + 3 + gap * 5 + 2,
+                                 x=point_margin.x)
+
+        # count messages of each user displayed once,
+        if counts[0] != tgt_user.handle:
+            counts = (tgt_user.handle, count_messages(tgt_user.handle))
 
         # get all field values and locations,
-        fields = get_display_fields(tgt_user, point=point_margin)
+        fields = get_display_fields(tgt_user, point=point_margin,
+                                    counts=counts[1],
+                                    is_sysop=session.user.is_sysop, gap=gap)
 
         # display all fields and prompt
         echo(display_options(term, fields))
@@ -572,9 +722,12 @@ def main(handle=None):
                 tgt_user = get_next_user(tgt_user)
                 break
             elif len(inp) == 1 and inp in string.ascii_letters:
-                if do_command(
-                        term, session, inp, fields, tgt_user, point_prompt):
-                    # when returning True, perform full-screen refresh,
+                result = do_command(
+                    term, session, inp, fields, tgt_user, point_prompt)
+                if result:
+                    # when returning True, perform refresh, of the full
+                    # screen when -1,
+                    dirty = -1 if result == -1 else dirty
                     break
                 else:
                     # otherwise, clean prompt field
