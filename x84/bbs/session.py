@@ -17,6 +17,7 @@ from x84.bbs.exception import Disconnected, Goto
 from x84.bbs.script_def import Script
 from x84.bbs.userbase import User
 from x84.bbs.ini import get_ini
+from x84.encodings import session_encoding
 
 
 #: singleton representing the session connected by current process
@@ -228,6 +229,7 @@ class Session(object):
     def encoding(self, value):
         # pylint: disable=C0111
         #         Missing docstring
+        value = session_encoding(value, default=self.encoding)
         if value != self.encoding:
             self.log.debug('session encoding {0} -> {1}'
                            .format(self.encoding, value))

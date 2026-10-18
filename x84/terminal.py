@@ -170,7 +170,8 @@ def determine_encoding(env):
         'syncterm': 'cp437',
     }.get(env['TERM'], default_encoding)
 
-    return env.get('encoding', fallback_encoding)
+    from x84.encodings import session_encoding
+    return session_encoding(env.get('encoding', fallback_encoding))
 
 
 #: environment variables of the server process, removed before initializing

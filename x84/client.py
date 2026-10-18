@@ -9,6 +9,7 @@ import warnings
 
 # local
 from x84.bbs.exception import Disconnected
+from x84.encodings import encode_output
 from x84.terminal import spawn_client_session
 
 
@@ -193,7 +194,7 @@ class BaseClient(object):
 
     def send_unicode(self, ucs, encoding='utf8'):
         """ Buffer unicode string, encoded for client as 'encoding'. """
-        self.send_str(ucs.encode(encoding, 'replace'))
+        self.send_str(encode_output(ucs, encoding))
 
     def is_active(self):
         """ Whether this connection is active (bool). """

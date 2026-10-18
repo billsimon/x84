@@ -198,6 +198,133 @@ def test_cp437_art_glyphs():
     assert decoder.decode(b'\xdb') == u'█'
 
 
+ALL_BYTES = bytes(range(256))
+
+
+def test_cp437_art_round_trip():
+    # each byte, such as those of a cp437 door, is sent unchanged to a
+    # cp437 terminal; ▲ and ▼ could not be encoded.
+    from x84.encodings import encode_output
+    text = ALL_BYTES.decode('cp437_art')
+    assert text.encode('cp437_art') == ALL_BYTES
+    assert encode_output(text, 'cp437') == ALL_BYTES
+    assert codecs.getincrementalencoder('cp437_art')().encode(
+        text) == ALL_BYTES
+    # so is text decoded as plain cp437, of control characters.
+    assert encode_output(ALL_BYTES.decode('cp437'), 'cp437') == ALL_BYTES
+
+
+def test_cp437_art_encoding_table_agrees_with_map():
+    # the fast encoding table, and the map of its fallback, must agree.
+    from x84.encodings.cp437_art import DECODING_TABLE, ENCODING_MAP
+    for byte, ucs in enumerate(DECODING_TABLE):
+        assert ENCODING_MAP[ord(ucs)] == byte, hex(byte)
+
+
+def test_cp437_art_glyph_bytes():
+    assert u'▲▼⌂→'.encode('cp437_art') == b'\x1e\x1f\x7f\x1a'
+    assert b'\x7f'.decode('cp437_art') == u'⌂'
+    # BULLET was encoded as BEL, which rings the terminal's bell.
+    with pytest.raises(UnicodeEncodeError):
+        u'•'.encode('cp437_art')
+
+
+@pytest.mark.parametrize('ucs,expected', [
+    (u'café', b'caf\x82'),
+    (u'café', b'caf\x82'),
+    (u'naïve ã', b'na\x8bve a'),
+    (u'‘quote’ “quote”', b"'quote' \"quote\""),
+    (u'a—b–c', b'a-b-c'),
+    (u'• item', b'\xf9 item'),
+    (u'← back', b'< back'),
+    (u'╭━╮', b'\xda\xc4\xbf'),
+    (u'✓', b'\xfb'),
+    (u'中|', b'??|'),
+    (u'Ａ|', b'A |'),
+    (u'\U0001f600|', b'??|'),
+    (u'a‍b\x85c', b'abc'),
+])
+def test_encode_output_cp437(ucs, expected):
+    from x84.encodings import encode_output
+    assert encode_output(ucs, 'cp437') == expected
+
+
+@pytest.mark.parametrize('ucs', [
+    u'café café', u'中文', u'ＡＢ', u'—',
+    u'\U0001f600', u'╭━╮', u'…', u'™', u'ﬁ',
+])
+def test_encode_output_cp437_keeps_width(ucs):
+    # what a cp437 terminal draws fills as many cells as on a utf-8 one.
+    import wcwidth
+    from x84.encodings import encode_output
+    drawn = encode_output(ucs, 'cp437').decode('cp437_art')
+    assert wcwidth.wcswidth(drawn) == wcwidth.wcswidth(ucs)
+
+
+def test_encode_output_utf8():
+    from x84.encodings import encode_output
+    text = ALL_BYTES.decode('cp437_art') + u'中\U0001f600'
+    assert encode_output(text, 'utf8') == text.encode('utf8')
+    assert encode_output(u'\ud800x', 'utf8') == b'?x'
+
+
+@pytest.mark.parametrize('name,expected', [
+    ('utf8', 'utf8'), ('UTF-8', 'utf8'), ('utf_8', 'utf8'),
+    ('cp437', 'cp437'), ('IBM437', 'cp437'), ('msdos', 'cp437'),
+    ('no-such-codec', 'utf8'),
+])
+def test_session_encoding(name, expected):
+    from x84.encodings import session_encoding
+    assert session_encoding(name) == expected
+
+
+def test_sauce_font_codecs():
+    from x84.bbs.output import SAUCE_FONT_MAP
+    assert SAUCE_FONT_MAP['IBM VGA25G 437'] == 'cp437'
+    for codec in set(SAUCE_FONT_MAP.values()):
+        codecs.lookup(codec)
+
+
+def test_split_art_lines():
+    from x84.bbs.output import split_art_lines
+    # only LF and CRLF end a line, not the glyphs ▲ ∟ ♀ ♂, or a bare CR.
+    assert split_art_lines(u'a\x1eb\x1c\x0c\x0b\rc\r\nd\n') == [
+        u'a\x1eb\x1c\x0c\x0b\rc', u'd', u'']
+
+
+def test_showart_unknown_encoding(session, tmp_path):
+    from x84.bbs import showart
+    artfile = tmp_path / 'art.ans'
+    artfile.write_bytes(b'\x01\xdb\r\n')
+    assert u'☺█' in u''.join(showart(str(artfile), encoding='cp872'))
+
+
+@pytest.mark.parametrize('encoding', [None, 'cp437', 'cp437_art'])
+def test_showart_same_for_cp437_and_utf8(session, tmp_path, encoding):
+    # a cp437 terminal draws the bytes it is sent as cp437 art; a utf-8
+    # terminal must be sent the same glyphs.
+    from x84.bbs import showart
+    from x84.encodings import encode_output
+    art = (b'\x1b[1;37m\x01\x02 \x0b\x0c \x18\x19\x1a\x1b[0m\r\n'
+           b'\x1e\x1f\x1c\x1d\x7f \xdb\xb0\xb1\xb2 \xc9\xcd\xbb\r\n'
+           b'\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\r\n')
+    artfile = tmp_path / 'art.ans'
+    artfile.write_bytes(art)
+    drawn = {}
+    for term_encoding in ('utf8', 'cp437'):
+        session.session.encoding = term_encoding
+        text = u''.join(showart(str(artfile), encoding=encoding))
+        sent = encode_output(text, term_encoding)
+        drawn[term_encoding] = sent.decode(
+            'utf8' if term_encoding == 'utf8' else 'cp437_art')
+        if term_encoding == 'cp437':
+            for line in art.split(b'\r\n')[:-1]:
+                assert line + b'\r\n' in sent
+    assert drawn['utf8'] == drawn['cp437']
+    assert u'☺☻ ♂♀ ↑↓' in drawn['utf8']
+    assert u'▲▼∟↔⌂' in drawn['utf8']
+
+
 # -- message base
 
 def test_msgbase(session):

@@ -1,6 +1,8 @@
 """ Terminal output package for x/84. """
 import warnings
 import inspect
+import logging
+import codecs
 import random
 import glob
 import os
@@ -57,11 +59,12 @@ for page in (
     '437', '720', '737', '775', '819', '850', '852', '855', '857', '858',
     '860', '861', '862', '863', '864', '865', '866', '869', '872',
 ):
-    codec = 'cp%s' % (page,)
+    # python has no cp872, which is cp855 but for its euro sign.
+    codec = {'872': 'cp855'}.get(page, 'cp%s' % (page,))
     SAUCE_FONT_MAP.update({
         'IBM EGA43 %s' % (page,): codec,
         'IBM EGA %s' % (page,): codec,
-        'IBM VGA25g %s' % (page,): codec,
+        'IBM VGA25G %s' % (page,): codec,
         'IBM VGA50 %s' % (page,): codec,
         'IBM VGA %s' % (page,): codec,
     })
@@ -373,22 +376,23 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
             #         Missing function docstring (col 8)
             session = getsession()
             if session.encoding == 'utf8':
-                return what.decode(encoding, 'replace')
+                return what.decode(art_codec(encoding), 'replace')
             # session encodings such as cp437 have no "transcoding" between
-            # art encodings: the bytes are displayed as-is.
-            return what.decode(session.encoding, 'replace')
+            # art encodings: the bytes are displayed as-is, decoded as they
+            # are encoded for output.
+            return what.decode(art_codec(session.encoding), 'replace')
 
     # If auto_mode is disabled, we'll just respect whatever input encoding was
     # selected before
     else:
-        _decode = lambda what: what.decode(encoding, 'replace')
+        _decode = lambda what: what.decode(art_codec(encoding), 'replace')
 
     # For wide terminals, center piece on screen using cursor movement
     # when center=True.
     padding = u''
     if center and term.width > 81:
         padding = term.move_x((term.width // 2) - 40)
-    lines = _decode(parsed.data).splitlines()
+    lines = split_art_lines(_decode(parsed.data))
     for idx, line in enumerate(lines):
 
         if poll_cancel is not False and term.inkey(poll_cancel):
@@ -424,6 +428,35 @@ def showart(filepattern, encoding=None, auto_mode=True, center=False,
                 break
         yield padding + line + u'\r\n'
     yield term.normal
+
+
+def art_codec(encoding):
+    """
+    Return the codec used to decode artwork of ``encoding``.
+
+    Artwork of cp437 decodes as ``cp437_art``, the glyphs of its low bytes,
+    as drawn by a cp437 terminal.  An unknown ``encoding`` is logged, and
+    ``cp437_art`` is returned.
+    """
+    try:
+        name = codecs.lookup(encoding).name
+    except LookupError:
+        logging.getLogger(__name__).warning(
+            'unknown art encoding {0!r}, using cp437_art.'.format(encoding))
+        return 'cp437_art'
+    return 'cp437_art' if name == 'cp437' else encoding
+
+
+def split_art_lines(text):
+    """
+    Return lines of artwork ``text``, without their line endings.
+
+    Lines end only by LF or CRLF: unlike :meth:`str.splitlines`, a bare CR,
+    and the control characters drawn as glyphs by cp437 terminals, do not
+    end a line.
+    """
+    return [line[:-1] if line.endswith(u'\r') else line
+            for line in text.split(u'\n')]
 
 
 def from_cp437(text):
