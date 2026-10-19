@@ -2,7 +2,10 @@
 # 3rd-party
 import pytest
 
-pytest.importorskip('feedparser')
+# local
+from tests.screens import PAUSE, run_script
+
+feedparser = pytest.importorskip('feedparser')
 pytest.importorskip('html2text')
 
 
@@ -57,3 +60,59 @@ def test_summaries_page_by_articles(script, session, rows):
         assert hackernews.page_up_summaries(
             term, start, height, lines) <= previous
     assert hackernews.page_up_summaries(term, 0, height, lines) == 0
+
+
+class Response(object):
+
+    """ A response of requests, of an article. """
+
+    status_code = 200
+    text = u'<p>the article</p>'
+
+
+def click(row, col):
+    """ Return a click of the mouse, as by ENTER at a 3270. """
+    return u'\x1b[<0;{0};{1}M\x1b[<0;{0};{1}m'.format(col + 1, row + 1)
+
+
+def test_clicks_of_3270(users, engine, script, session, monkeypatch):
+    # at a 3270, ENTER is a click of the mouse where the cursor is: an
+    # article clicked is viewed, and commands of the context help, such as
+    # [q]uit, are their keys; an article is clicked for [c]omments, too.
+    hackernews = script('hackernews')
+    session.session.kind = 'tn3270'
+    # as answered by the tn3270 server, to queries of mouse modes.
+    session.session.terminal._dec_mode_cache.update({1000: 2, 1006: 2})
+    entries = [feedparser.FeedParserDict(
+        title=u'Article {0}'.format(idx),
+        link=u'http://example.com/{0}'.format(idx),
+        comments=u'http://example.com/comments/{0}'.format(idx))
+        for idx in range(1, 31)]
+    monkeypatch.setattr(hackernews.feedparser, 'parse',
+                        lambda url, agent: feedparser.FeedParserDict(
+                            entries=entries))
+    fetched = []
+
+    def fake_get(url, headers, timeout):
+        fetched.append(url)
+        return Response()
+    monkeypatch.setattr(hackernews.requests, 'get', fake_get)
+
+    def command(text, name):
+        # as centered on the last row.
+        return click(23, text.center(80).index(name) + 1)
+    summary_help = u'[q]uit - up/down - [v]iew - [c]omments'
+    article_help = u'[r]eturn - (pg)up/down - [100%] - [s]hare'
+    # the list begins at the second row, an article to each row.
+    keys = [click(2, 5), PAUSE, command(article_help, u'[r]eturn'), PAUSE,
+            command(summary_help, u'[c]omments'), PAUSE, click(3, 30), PAUSE,
+            command(article_help, u'[r]eturn'), PAUSE,
+            command(summary_help, u'[q]uit'),
+            # should a click not be taken: escape a prompt, and quit.
+            2.0, u'\x1b', PAUSE, u'r', PAUSE, u'q']
+    output = run_script(engine, hackernews, keys)
+    assert u'\x1b[?1006;1000h' in output.replace(u'\x1b[?1000;1006h',
+                                                 u'\x1b[?1006;1000h')
+    assert fetched == [u'http://example.com/2',
+                       u'http://example.com/comments/3']
+    assert u'enter article #' in output

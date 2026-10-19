@@ -48,11 +48,11 @@ a key instead, such as ``q`` to quit, it is not, so that no Return remains
 to be taken as another key.  ENTER alone is Return.
 
 Or move the cursor onto a choice of a menu, such as ``[weather] forecast``
-of the main menu, or of a list, such as a message, and press ENTER to
-choose it; or onto a key named at the bottom of the screen, such
-as ``Q Quit``, to press it.  Lists and messages are paged by PF7 and PF8,
-named at the top of the screen, where they may be pressed by the cursor,
-too, for keyboards without them.
+of the main menu, or of a list, such as a message or an article of Hacker
+News, and press ENTER to choose it; or onto a key named at the bottom of
+the screen, such as ``Q Quit`` or ``[q]uit``, to press it.  Lists and
+messages are paged by PF7 and PF8, named at the top of the screen, where
+they may be pressed by the cursor, too, for keyboards without them.
 
 The PF keys are named as by ISPF, and send what was typed, followed by the
 key each stands for:
