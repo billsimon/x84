@@ -141,15 +141,25 @@ def style_sequence(term, style):
     parts = [term.normal]
     fg, bg = style
     if fg is not None:
-        # black, of a terminal's black background, is dark gray.
-        if fg == 0 and not bg:
-            fg = 8
-        if fg >= 8:
-            parts.append(term.bold)
-        parts.append(term.color(DOS_ANSI[fg % 8]))
+        color = DOS_ANSI[fg % 8]
+        if fg < 8:
+            parts.append(term.color(color))
+        elif term.number_of_colors >= 16:
+            parts.append(term.color(color + 8))
+        else:
+            # bright, as of an ansi terminal, by bold.
+            parts.extend((term.bold, term.color(color)))
     if bg:
         parts.append(term.on_color(DOS_ANSI[bg]))
     return u''.join(parts)
+
+
+def is_hidden(style):
+    """
+    Whether text of ``style`` is hidden: black, of a black background, as
+    some servers and clients write in place of spaces they would lose.
+    """
+    return style.fg == 0 and not style.bg
 
 
 def plain_text(runs):
@@ -386,7 +396,8 @@ class ChatScreen(object):
 
     def add(self, runs, mark=False):
         """ Add a message of ``runs``, its time marked, of a mention. """
-        runs = [(style, fold_text(text, self.encoding))
+        runs = [(PLAIN, u' ' * text_width(text)) if is_hidden(style)
+                else (style, fold_text(text, self.encoding))
                 for style, text in runs]
         entry = (time.strftime('%H:%M'), runs, mark)
         self.entries.append(entry)

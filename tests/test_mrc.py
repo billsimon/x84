@@ -178,6 +178,35 @@ def test_packets():
     assert decode_line(b'caf\x82') == u'caf\u00e9'
 
 
+# colors
+
+
+def test_colors(script, session):
+    # bright colors are those of the terminal, or bold, of an ansi
+    # terminal of 8 colors; dark gray is not black.
+    import blessed
+    mrcchat = script(SCRIPT)
+    Style = mrcchat.Style
+    xterm = blessed.Terminal(kind='xterm-256color', force_styling=True)
+    ansi = blessed.Terminal(kind='ansi', force_styling=True)
+    assert mrcchat.style_sequence(xterm, Style(8, None)).endswith(
+        u'\x1b[90m')
+    assert mrcchat.style_sequence(xterm, Style(12, 1)).endswith(
+        u'\x1b[91m\x1b[44m')
+    assert mrcchat.style_sequence(xterm, Style(3, None)).endswith(
+        u'\x1b[36m')
+    assert mrcchat.style_sequence(ansi, Style(8, None)).endswith(
+        u'\x1b[1m\x1b[30m')
+
+    # black of a black background is hidden, written as spaces; black of
+    # another background is not.
+    screen = mrcchat.ChatScreen(session.term, 'utf8')
+    screen.add(mrcchat.parse_pipes(u'|08-|00.|07Use |16|00__|20|00red'))
+    assert screen.entries[-1][1] == [
+        (Style(8, None), u'-'), (mrcchat.PLAIN, u' '), (Style(7, None), u'Use '),
+        (mrcchat.PLAIN, u'  '), (Style(0, 4), u'red')]
+
+
 # relay
 
 
