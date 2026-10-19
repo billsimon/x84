@@ -196,7 +196,7 @@ def init_bbs_ini():
     cfg_bbs.set('tn3270', 'enabled', 'no')
     cfg_bbs.set('tn3270', 'addr', '127.0.0.1')
     cfg_bbs.set('tn3270', 'port', '3270')
-    cfg_bbs.set('tn3270', 'codepage', 'bracket')
+    cfg_bbs.set('tn3270', 'codepage', 'auto')
     cfg_bbs.set('tn3270', 'term', 'xterm-256color')
     cfg_bbs.set('tn3270', 'background', 'auto')
 

@@ -27,9 +27,11 @@ The following options are available, but not required:
 
 - ``addr``, ``port``: where to listen, ``127.0.0.1`` port ``3270`` by
   default.
-- ``codepage``: the EBCDIC code page of terminals, ``bracket`` by default,
-  as by the x3270 family: cp037 (U.S. and Canada), of brackets moved.
-  Others are named as by python: ``cp037``, ``cp273`` (Germany),
+- ``codepage``: the EBCDIC code page of terminals, by default ``auto``:
+  that a terminal reports, when it answers a query, but ``bracket`` for
+  the x3270 family, and ``cp037`` for terminals that report none.
+  ``bracket`` is of the x3270 family: cp037 (U.S. and Canada), of brackets
+  moved.  Others are named as by python: ``cp037``, ``cp273`` (Germany),
   ``cp500`` (international), ``cp1140`` (cp037, with the euro sign).
 - ``term``: terminal type of the bbs session, ``xterm-256color`` by
   default.
@@ -52,6 +54,7 @@ This server requires pyte, installed by the ``tn3270`` extra::
 .. _pyte: https://github.com/selectel/pyte
 """
 # std imports
+import codecs
 import functools
 import itertools
 import re
@@ -200,8 +203,13 @@ MODELS = {'2': (24, 80), '3': (32, 80), '4': (43, 80), '5': (27, 132)}
 RE_MODEL = re.compile(r'IBM-327[89]-([2-5])(-E)?$')
 
 # query reply codes
-QR_USABLE_AREA, QR_COLOR, QR_HIGHLIGHT, QR_IMPLICIT_PARTITION = (
-    0x81, 0x86, 0x87, 0xA6)
+QR_USABLE_AREA, QR_CHARSETS, QR_COLOR, QR_HIGHLIGHT = (
+    0x81, 0x85, 0x86, 0x87)
+QR_RPQ_NAMES, QR_IMPLICIT_PARTITION = 0xA1, 0xA6
+
+#: code pages reported by terminals of brackets as the x3270 family's, as
+#: of Hercules: cp1047, which python lacks.
+BRACKET_CODEPAGES = (1047,)
 
 #: write structured field, read partition query.
 QUERY = bytes((CMD_WSF, 0x00, 0x05, 0x01, 0xFF, 0x02))
@@ -284,10 +292,13 @@ def parse_query_reply(record):
 
     :param bytes record: inbound record, beginning with AID 0x88.
     :returns: dict of ``codes``, the set of query reply codes, ``size``,
-        the ``(rows, columns)`` of the terminal, or None, and ``colors``,
-        the number of colors it displays: 0, 7, or 16.
+        the ``(rows, columns)`` of the terminal, or None, ``colors``, the
+        number of colors it displays: 0, 7, or 16, ``codepage``, the
+        number of its code page, such as 37, or None, and ``name``, as of
+        the emulator, such as ``'x3270'``, or None.
     """
     codes, size, usable, colors = set(), None, None, 0
+    codepage, name = None, None
     pos = 1
     while pos + 4 <= len(record):
         length = (record[pos] << 8) | record[pos + 1]
@@ -318,8 +329,48 @@ def parse_query_reply(record):
                         if color)
             colors = (16 if set(range(0xF8, 0x100)) <= shown else
                       7 if set(range(0xF1, 0xF8)) <= shown else 0)
+        elif (code == QR_CHARSETS and len(data) >= 9 and data[0] & 0x02
+                and data[8] >= 7):
+            # descriptors, each ending with its CGCSID, of character set
+            # and code page, when present: that of the first, the base set.
+            if len(data) >= 9 + data[8]:
+                cgcsid = data[9 + data[8] - 4:9 + data[8]]
+                codepage = (cgcsid[2] << 8) | cgcsid[3]
+        elif code == QR_RPQ_NAMES and len(data) >= 9 and data[8] >= 1:
+            # device type and model, and the name, of its length first.
+            name = bytes(data[9:8 + data[8]]).decode('cp037', 'replace')
         pos += length
-    return {'codes': codes, 'size': size or usable, 'colors': colors}
+    return {'codes': codes, 'size': size or usable, 'colors': colors,
+            'codepage': codepage, 'name': name}
+
+
+def choose_codepage(configured, reply):
+    """
+    Return the code page of a terminal, of its query ``reply``.
+
+    :param str configured: option ``codepage``: chosen when other than
+        ``auto``.
+    :param dict reply: as returned by :func:`parse_query_reply`, or None
+        when the terminal was not asked, or did not answer.
+    """
+    if configured and configured.lower() != 'auto':
+        return configured
+    if reply is None:
+        # most such terminals are of the x3270 family, of no -E model.
+        return 'bracket'
+    number, x3270 = reply['codepage'], reply['name'] == 'x3270'
+    if number in BRACKET_CODEPAGES or (x3270 and number in (37, None)):
+        # the x3270 family reports 37 of 'bracket', as of cp037.
+        return 'bracket'
+    if number is not None:
+        try:
+            codecs.lookup('cp{0:03d}'.format(number))
+        except LookupError:
+            pass
+        else:
+            return 'cp{0:03d}'.format(number)
+    # as DX3270, which reports none.
+    return 'cp037'
 
 
 def parse_input(record):
@@ -1524,7 +1575,7 @@ class ConnectTN3270(BaseConnect):
             raise ValueError('binary or end of record mode refused')
 
         rows, columns, extended = parse_ttype(client.ttype)
-        codes, colors = set(), 0
+        codes, colors, reply = set(), 0, None
         if extended:
             client.send_record(QUERY)
             if self.wait_for(client.query_event.is_set, self.TIME_QUERY):
@@ -1536,7 +1587,7 @@ class ConnectTN3270(BaseConnect):
             else:
                 self.log.debug('{client.addrport}: no answer to query'
                                .format(client=client))
-        codepage = get_ini('tn3270', 'codepage') or 'bracket'
+        codepage = choose_codepage(get_ini('tn3270', 'codepage'), reply)
         # background colors are displayed by terminals of 16 colors, as the
         # x3270 family, unless configured otherwise.
         background = (get_ini('tn3270', 'background') or 'auto').lower()
@@ -1545,10 +1596,10 @@ class ConnectTN3270(BaseConnect):
         client.setup(rows, columns, codepage, colors=colors,
                      highlight=QR_HIGHLIGHT in codes, background=background)
         self.log.info('{client.addrport}: {client.ttype}, {rows}x{columns}'
-                      '{colors}'.format(
+                      '{colors}, {codepage}'.format(
                           client=client, rows=rows, columns=columns,
                           colors=', {0} colors'.format(colors)
-                          if colors else u''))
+                          if colors else u'', codepage=codepage))
         env = client.env
         env['TERM'] = get_ini('tn3270', 'term') or 'xterm-256color'
         env['encoding'] = 'utf8'

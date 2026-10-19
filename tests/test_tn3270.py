@@ -29,20 +29,34 @@ COLOR16 = ('bracket', 16, True, True)
 BASIC = ('bracket', 0, False, False)
 
 #: a terminal's answer to a query: a 27x132 screen, of 16 colors and
-#: extended highlighting, as by s3270.
+#: extended highlighting, of code page 37, as by s3270.
 QUERY_REPLY = (
     b'\x88'
     # usable area
     b'\x00\x0a\x81\x81\x01\x00\x00\x84\x00\x1b'
+    # character sets: the base set, of CGCSID 697/37, and APL's, 963/310
+    b'\x00\x1b\x81\x85\x82\x00\x09\x0c\x00\x00\x00\x00\x07'
+    b'\x00\x10\x00\x02\xb9\x00\x25\x01\x00\xf1\x03\xc3\x01\x36'
     # color: the default, and 15 colors, each displayed
     b'\x00\x26\x81\x86\x00\x10\x00\xf4' + bytes(
         val for color in range(0xF1, 0x100) for val in (color, color)) +
     # highlighting
     b'\x00\x05\x81\x87\x00'
+    # RPQ names: of device type and model 0, x3270
+    b'\x00\x12\x81\xa1\x00\x00\x00\x00\x00\x00\x00\x00'
+    b'\x06\xa7\xf3\xf2\xf7\xf0'
     # implicit partition
     b'\x00\x11\x81\xa6\x00\x00\x0b\x01\x00'
     b'\x00\x50\x00\x18\x00\x84\x00\x1b'
 )
+
+#: the answer of DX3270 to a query: of 7 colors, and no code page.
+DX3270_REPLY = bytes(
+    [0x88, 0x00, 0x08, 0x81, 0x80, 0x81, 0x84, 0x86, 0x87,
+     0x00, 0x15, 0x86, 0x00, 0x08, 0x00, 0xF4] +
+    [val for color in range(0xF1, 0xF8) for val in (color, color)] +
+    [0x00, 0x0E, 0x87, 0x05, 0x00, 0x00, 0xF1, 0xF1, 0xF2, 0xF2,
+     0xF4, 0xF4, 0xF8, 0xF8])
 
 
 def test_address_round_trip():
@@ -66,10 +80,12 @@ def test_parse_query_reply():
     assert reply['size'] == (27, 132)
     assert {0x81, 0x86, 0x87, 0xA6} <= reply['codes']
     assert reply['colors'] == 16
+    assert reply['codepage'] == 37 and reply['name'] == u'x3270'
     # without an implicit partition, the usable area is the size.
     assert parse_query_reply(QUERY_REPLY[:11])['size'] == (27, 132)
     assert parse_query_reply(b'\x88') == {
-        'codes': set(), 'size': None, 'colors': 0}
+        'codes': set(), 'size': None, 'colors': 0, 'codepage': None,
+        'name': None}
     # a monochrome terminal names colors, none of them displayed; a 3279
     # displays 7.
     pairs = [(0x00, 0xF4)] + [(color, 0) for color in range(0xF1, 0x100)]
@@ -794,6 +810,18 @@ def test_negotiate_extended(cfg):
     assert client.showing_help
 
 
+def test_negotiate_dx3270(cfg):
+    # DX3270, reporting no code page, is of true cp037, its brackets
+    # where those of the x3270 family are not.
+    client, terminal, error = negotiate(cfg, 'IBM-3279-2-E', DX3270_REPLY)
+    assert error is None
+    assert client.features == ('cp037', 7, True, False)
+    # unless configured.
+    cfg.set('tn3270', 'codepage', 'bracket')
+    client, terminal, error = negotiate(cfg, 'IBM-3279-2-E', DX3270_REPLY)
+    assert client.features == ('bracket', 7, True, False)
+
+
 def test_negotiate_without_query(cfg):
     client, terminal, error = negotiate(cfg, 'IBM-3278-4')
     assert error is None
@@ -852,15 +880,33 @@ def test_terminals_that_carry_attributes(pair, colors):
 
 def test_query_reply_of_dx3270():
     # DX3270 omits the identifier of query replies, and reports 7 colors.
-    reply = bytes(
-        [0x88, 0x00, 0x08, 0x81, 0x80, 0x81, 0x84, 0x86, 0x87,
-         0x00, 0x15, 0x86, 0x00, 0x08, 0x00, 0xF4] +
-        [val for color in range(0xF1, 0xF8) for val in (color, color)] +
-        [0x00, 0x0E, 0x87, 0x05, 0x00, 0x00, 0xF1, 0xF1, 0xF2, 0xF2,
-         0xF4, 0xF4, 0xF8, 0xF8])
-    result = parse_query_reply(reply)
+    result = parse_query_reply(DX3270_REPLY)
     assert result['colors'] == 7
     assert 0x87 in result['codes']
+    # nor its code page, or name.
+    assert result['codepage'] is None and result['name'] is None
+
+
+def test_choose_codepage():
+    def reply(codepage, name):
+        return {'codepage': codepage, 'name': name}
+    # the x3270 family reports 37 of 'bracket', its default.
+    assert tn3270.choose_codepage('auto', reply(37, u'x3270')) == 'bracket'
+    # others are of the code page reported, as of true cp037, and as
+    # DX3270, which reports none.
+    assert tn3270.choose_codepage('auto', reply(37, None)) == 'cp037'
+    assert tn3270.choose_codepage('auto', reply(None, None)) == 'cp037'
+    assert tn3270.choose_codepage('auto', reply(500, u'x3270')) == 'cp500'
+    assert tn3270.choose_codepage('auto', reply(1140, None)) == 'cp1140'
+    # cp1047, which python lacks, is of brackets as 'bracket'.
+    assert tn3270.choose_codepage('auto', reply(1047, None)) == 'bracket'
+    assert tn3270.choose_codepage('auto', reply(9999, None)) == 'cp037'
+    # of a terminal not asked, or not answering.
+    assert tn3270.choose_codepage('auto', None) == 'bracket'
+    assert tn3270.choose_codepage(None, None) == 'bracket'
+    # unless configured.
+    assert tn3270.choose_codepage('cp273', reply(37, u'x3270')) == 'cp273'
+    assert tn3270.choose_codepage('bracket', reply(None, None)) == 'bracket'
 
 
 def test_logon_screen(cfg):

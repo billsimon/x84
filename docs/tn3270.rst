@@ -151,7 +151,9 @@ to F4 are not those of the terminal: c3270 then types ``OP`` for PF1,
 and the like, rather than pressing the PF key.
 
 DX3270, for the Mac, displays the 7 colors of a 3279, and background
-colors too, when option ``background`` is ``yes``.
+colors too, when option ``background`` is ``yes``.  It is of the true
+cp037: leave its setting "Display Hercules-style EBCDIC brackets as []"
+off, which displays ``!`` as ``]``.
 
 Block characters of ANSI art are blocks of their color, line drawing
 characters are of ``-``, ``|`` and ``+``, and any other character not of
@@ -164,13 +166,16 @@ All of section ``[tn3270]``:
 
 - ``enabled``: whether to listen for 3270 terminals, ``no`` by default.
 - ``addr``, ``port``: where to listen, ``127.0.0.1`` and ``3270``.
-- ``codepage``: the EBCDIC code page of terminals, ``bracket`` by default:
-  that of the x3270 family by default, cp037 (U.S. and Canada) with its
-  brackets moved.  Other values are named as by python, such as
-  ``cp037``, for terminals of the true cp037; ``cp273`` (Germany),
-  ``cp500`` (international) and ``cp1140`` (cp037, with the euro sign).
-  When ``[`` and ``]`` are displayed as ``Ý`` and ``¨``, or the reverse,
-  choose between ``bracket`` and ``cp037``.
+- ``codepage``: the EBCDIC code page of terminals, ``auto`` by default:
+  the code page a terminal reports, when it answers a query, as an
+  extended terminal does; but ``bracket`` for the x3270 family, and for
+  terminals that are not asked, and ``cp037`` for those that report none,
+  as DX3270.  ``bracket`` is the code page of the x3270 family by default,
+  cp037 (U.S. and Canada) with its brackets moved.  Other values are named
+  as by python, such as ``cp037``, for terminals of the true cp037;
+  ``cp273`` (Germany), ``cp500`` (international) and ``cp1140`` (cp037,
+  with the euro sign).  When ``[`` and ``]`` are displayed as ``Ý`` and
+  ``¨``, or the reverse, choose between ``bracket`` and ``cp037``.
 - ``term``: terminal type of sessions, ``xterm-256color``.
 - ``background``: whether characters on a colored background are
   displayed in their colors on it, ``yes``, or in reverse video of the
