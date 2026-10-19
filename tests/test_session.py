@@ -173,3 +173,23 @@ def test_server_environment_does_not_affect_sessions(monkeypatch):
     assert term.does_styling
     assert term.red(u'x') != u'x'
     assert os.environ.get('COLORTERM') == 'truecolor'
+
+
+def test_terminal_of_unknown_type_of_known_family(monkeypatch):
+    """ A terminal type not of the database is of its family, else ansi. """
+    from x84.terminal import family_kind, init_term
+    import x84.bbs.ini
+    monkeypatch.setattr(x84.bbs.ini, 'CFG', x84.bbs.ini.init_bbs_ini())
+    for name in ('TERM', 'COLORTERM'):
+        monkeypatch.setenv(name, '')
+
+    class Writer(object):
+        def send(self, data):
+            pass
+    term = init_term(Writer(), {'TERM': 'xterm-color', 'LINES': '24',
+                                'COLUMNS': '80'})
+    assert term.kind == 'xterm'
+    assert family_kind('xterm-color', 'ansi') == 'xterm'
+    assert family_kind('screen-color', 'ansi') == 'screen'
+    assert family_kind('xterm', 'ansi') == 'ansi'
+    assert family_kind('no-such-terminal', 'ansi') == 'ansi'

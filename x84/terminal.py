@@ -182,6 +182,24 @@ SERVER_TERMINAL_VARIABLES = (
 )
 
 
+def family_kind(kind, default):
+    """
+    Return the terminal type of the family of ``kind``, a type not of the
+    terminal database: such as ``xterm`` of ``xterm-color``; else
+    ``default``.
+    """
+    import jinxed
+    family = kind.split('-', 1)[0]
+    if family and family != kind:
+        try:
+            jinxed.Terminal(family)
+        except jinxed.error:
+            pass
+        else:
+            return family
+    return default
+
+
 def init_term(writer, env):
     """
     Determine the final TERM and encoding and return a Terminal.
@@ -216,7 +234,8 @@ def init_term(writer, env):
                     stream=IPCStream(writer=writer),
                     rows=int(env.get('LINES', '24')),
                     columns=int(env.get('COLUMNS', '80')),
-                    kind_fallback=termcap_unknown)
+                    kind_fallback=family_kind(env['TERM'],
+                                              termcap_unknown))
 
     if term.kind != env['TERM']:
         # the given environment's TERM failed terminfo lookup, because,
