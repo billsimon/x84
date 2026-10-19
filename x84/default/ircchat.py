@@ -105,8 +105,8 @@ SYNCTERM_FONT = get_ini('irc', 'syncterm_font') or 'topaz'
 #: answer to CTCP VERSION.
 VERSION = u'x/84 bbs ircchat'
 
-#: terminal colors of mIRC colors 0 to 15, as of BBS terminals: their
-#: bright colors are bold.
+#: terminal colors of mIRC colors 0 to 15: their bright colors, of names
+#: 'bold_', are displayed by :func:`fg_sequence`.
 MIRC_COLORS = (
     'bold_white', 'black', 'blue', 'green', 'bold_red', 'red',
     'magenta', 'yellow', 'bold_yellow', 'bold_green', 'cyan',
@@ -283,6 +283,32 @@ def nearest_mirc(rgb):
     return min(range(16), key=lambda idx: distance(MIRC_RGB[idx]))
 
 
+#: numbers of the terminal's colors, by name.
+ANSI_COLORS = ('black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan',
+               'white')
+
+
+def fg_sequence(term, name):
+    """
+    Return sequence of the terminal displaying color ``name`` of text, of
+    :data:`MIRC_COLORS`.
+
+    A bright color is the terminal's own, of 16 colors or more; else it is
+    bold, as of an ansi terminal, as of a bbs; of others, such as of
+    xterm, of 8 colors by their terminfo, which may display bold of the
+    normal color, it is also of its own color, 90 to 97.
+    """
+    if not name.startswith('bold_'):
+        return getattr(term, name)
+    color = ANSI_COLORS.index(name[len('bold_'):])
+    if term.number_of_colors >= 16:
+        return term.color(color + 8)
+    sequence = term.bold + term.color(color)
+    if not (term.kind or u'').startswith('ansi'):
+        sequence += u'\x1b[{0}m'.format(90 + color)
+    return sequence
+
+
 def style_sequence(term, style):
     """ Return sequence of the terminal displaying ``style``. """
     parts = [term.normal]
@@ -302,7 +328,7 @@ def style_sequence(term, style):
             # black, of a terminal's black background, is dark gray.
             if fg == 1 and style.bg is None:
                 fg = 14
-            parts.append(getattr(term, MIRC_COLORS[fg]))
+            parts.append(fg_sequence(term, MIRC_COLORS[fg]))
         else:
             parts.append(term.color_rgb(*rgb_tuple(color_rgb(style.fg))))
     if style.bg is not None:

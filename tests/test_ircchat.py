@@ -67,9 +67,9 @@ def test_style_sequence(ircchat, session):
     from blessed import Terminal
     term = Terminal(kind='xterm-256color', force_styling=True)
     plain = ircchat.PLAIN
-    # black, on the terminal's background, is dark gray.
+    # black, on the terminal's background, is dark gray: bright black.
     assert ircchat.style_sequence(term, plain._replace(fg=1)) == (
-        term.normal + term.bold_black)
+        term.normal + u'\x1b[90m')
     assert ircchat.style_sequence(term, plain._replace(fg=1, bg=0)) == (
         term.normal + term.black + term.on_white)
     # extended colors are of rgb, at 256 colors, or of the nearest mIRC
@@ -81,6 +81,13 @@ def test_style_sequence(ircchat, session):
         ansi.normal + ansi.bold_red)
     assert ircchat.style_sequence(ansi, plain._replace(bg=12)) == (
         ansi.normal + ansi.on_blue)
+    # bright colors of a terminal of 8 colors, such as xterm, which may
+    # display bold of the normal color, are also of its bright colors.
+    xterm = Terminal(kind='xterm', force_styling=True)
+    assert ircchat.style_sequence(xterm, plain._replace(fg=14)) == (
+        xterm.normal + xterm.bold + xterm.black + u'\x1b[90m')
+    assert ircchat.style_sequence(xterm, plain._replace(fg=4)) == (
+        xterm.normal + xterm.bold + xterm.red + u'\x1b[91m')
 
 
 def test_wrap_runs(ircchat):
