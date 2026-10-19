@@ -211,6 +211,20 @@ def test_colors(script, session):
         (mrcchat.PLAIN, u'  '), (Style(0, 4), u'red')]
 
 
+def test_split_message(script, session):
+    # a text longer than a message is split between words, or within a
+    # word longer, not within a pipe code; colors continue.
+    mrcchat = script(SCRIPT)
+    split = mrcchat.split_message
+    assert split(u'short', 20) == [u'short']
+    assert split(u'one two three four five six', 10) == [
+        u'one two', u'three four', u'five six']
+    assert split(u'x' * 25, 10) == [u'x' * 10, u'x' * 10, u'x' * 5]
+    assert split(u'abcdefgh|12ij', 10) == [u'abcdefgh', u'|12ij']
+    assert split(u'|04red and more |20|15white on red text', 18) == [
+        u'|04red and more', u'|04|20|15white on', u'|20|15red text']
+
+
 # relay
 
 
@@ -535,6 +549,28 @@ def test_direct_messages(chat, script, mrc_server):
     assert u'ignored words' not in text
     from x84.bbs.userbase import get_user
     assert get_user(u'marty')['mrc_twits'] == [u'biff']
+
+
+def test_long_line(chat, script, mrc_server):
+    # a line longer than the screen scrolls as it is typed; one longer
+    # than a message, 279 characters, is sent as two.
+    mrcchat = script(SCRIPT)
+    words = u' '.join(u'word{0:02d}'.format(num) for num in range(40))
+    typed = []
+    run_chat(chat, mrcchat, [1.0, words, 0.5,
+                             lambda: typed.append(len(chat.output)),
+                             u'\r', 1.0, u'/quit\r'])
+    bodies = [body for body in mrc_server.bodies(u'marty')
+              if body.startswith(u'|03<')]
+    prefix = u'|03<|11marty|03>|16|07 |07'
+    assert len(bodies) == 2
+    assert all(body.startswith(prefix) and len(body) - len(prefix) <= 140
+               for body in bodies)
+    assert u' '.join(body[len(prefix):] for body in bodies) == words
+    # as it is typed, the line's end is displayed, after the prompt.
+    screen = screen_of(u''.join(chat.output[:typed[0]]))
+    assert screen.display[-1].startswith(u'[#lobby] ')
+    assert screen.display[-1].rstrip().endswith(u'word39')
 
 
 def test_settings(chat, script, mrc_server):

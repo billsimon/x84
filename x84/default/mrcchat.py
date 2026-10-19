@@ -40,8 +40,11 @@ MAX_SCROLLBACK = get_ini('mrc', 'max_scrollback', getter='getint') or 200
 #: the room first joined.
 DEFAULT_ROOM = get_ini('mrc', 'room') or u'lobby'
 
-#: the longest line typed, of the protocol.
-MAX_INPUT = 140
+#: the longest line typed: a line longer than a message is sent as several.
+MAX_INPUT = 1000
+
+#: the longest text of a message, as of other clients.
+MAX_MESSAGE = 140
 
 #: the longest packet, of the protocol.
 MAX_PACKET = 255
@@ -277,6 +280,39 @@ def mask_input(text):
     if idx is not None and len(words) > idx:
         words[idx] = u'*' * len(words[idx])
     return u' '.join(words)
+
+
+def split_message(text, limit):
+    """
+    Return ``text`` as messages of at most ``limit`` characters, split
+    between words, or within a word longer, but not within a pipe code.
+    A message continues the colors of pipe codes of the one before it.
+    """
+    messages, colors = [], u''
+    text = text.strip()
+    while text:
+        room = limit - len(colors)
+        if len(text) <= room:
+            cut = len(text)
+        else:
+            cut = text.rfind(u' ', 0, room + 1)
+            if cut <= 0:
+                cut = room
+                for back in (1, 2):
+                    if RE_PIPE.match(text, cut - back):
+                        cut -= back
+                        break
+        part = colors + text[:cut].rstrip()
+        messages.append(part)
+        fg = bg = None
+        for code in RE_PIPE.findall(part):
+            if int(code) < 16:
+                fg = code
+            elif int(code) < 32:
+                bg = code
+        colors = u''.join(u'|' + code for code in (bg, fg) if code)
+        text = text[cut:].lstrip()
+    return messages
 
 
 def mentions(body, nick):
@@ -562,7 +598,6 @@ class MRCChat(object):
         else:
             self.screen.prompt = u'#' + self.room if self.room else self.nick
             self.screen.prompt_style = None
-        self.screen.input.max_length = self.max_input()
 
     @staticmethod
     def direct_target(text):
@@ -579,13 +614,19 @@ class MRCChat(object):
             self.prefs['ltbracket'], self.prefs['nickcolor'], self.nick,
             self.prefs['rtbracket'])
 
-    def max_input(self):
-        """ The longest line typed, of the packet it is sent by. """
-        prefix = (len(self.nick) + len(self.site) + len(self.room) * 2 +
-                  len(self.name_prompt()) + 20)
-        return max(20, min(MAX_INPUT, MAX_PACKET - prefix))
-
     # packets sent
+
+    def say(self, to_user, to_room, prefix, text):
+        """
+        Send ``text`` to ``to_user`` or ``to_room``, each message of it
+        begun by ``prefix``: of several messages, of a text longer than
+        one, or than its packet may be.
+        """
+        empty = format_packet(Packet(self.nick, self.site, self.room,
+                                     to_user, u'', to_room, prefix))
+        limit = max(20, min(MAX_MESSAGE, MAX_PACKET - len(empty)))
+        for message in split_message(ascii_text(text), limit):
+            self.send(to_user, u'', to_room, prefix + message)
 
     def send(self, to_user, msg_ext, to_room, body, from_room=None):
         """ Send packet of ``body``, from this user. """
@@ -963,8 +1004,8 @@ class MRCChat(object):
         if self.state != 'connected' or not self.announced:
             self.error(u'Not connected to MRC.')
         else:
-            self.send_room(u'{0}|{1:02d}{2}'.format(
-                self.name_prompt(), self.text_color, ascii_text(line)))
+            self.say(u'', self.room, u'{0}|{1:02d}'.format(
+                self.name_prompt(), self.text_color), line)
         return True
 
     def cmd_local_help(self, _):
@@ -1020,8 +1061,7 @@ class MRCChat(object):
     def cmd_me(self, rest):
         """ /me action: describe what you are doing. """
         if rest:
-            self.send_room(u'|15* |13{0} {1}'.format(
-                self.nick, ascii_text(rest)))
+            self.say(u'', self.room, u'|15* |13{0} '.format(self.nick), rest)
 
     def cmd_msg(self, rest):
         """ /msg user message: send a direct message. """
@@ -1031,8 +1071,8 @@ class MRCChat(object):
             return
         target = name_tag(target).upper()
         text = ascii_text(text.strip())
-        self.send(target, u'', u'', u'|15* |08(|15{0}|08/|14DirectMsg|08) '
-                  u'|07{1}'.format(self.nick, text))
+        self.say(target, u'', u'|15* |08(|15{0}|08/|14DirectMsg|08) |07'
+                 .format(self.nick), text)
         self.show(u'|15* |08(|14DirectMsg|08->|15{0}|08) |{1:02d}{2}'.format(
             target, self.text_color, text))
 
@@ -1046,8 +1086,8 @@ class MRCChat(object):
     def cmd_b(self, rest):
         """ /b message: broadcast to every room. """
         if rest:
-            self.send(u'', u'', u'', u'|15* |08(|15{0}|08/|14Broadcast|08) '
-                      u'|07{1}'.format(self.nick, ascii_text(rest)))
+            self.say(u'', u'', u'|15* |08(|15{0}|08/|14Broadcast|08) |07'
+                     .format(self.nick), rest)
 
     def cmd_topic(self, rest):
         """ /topic text: change the room's topic. """
