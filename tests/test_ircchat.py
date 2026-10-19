@@ -132,6 +132,11 @@ def test_split_message(ircchat):
     assert u''.join(messages).replace(u' ', u'') == text.replace(u' ', u'')
     assert all(message.endswith(u'word') for message in messages[:2])
     assert ircchat.split_message(u'short', 100) == [u'short']
+    # a long word is not split within a color code.
+    assert ircchat.split_message(u'x' * 8 + u'\x0304,12red', 10) == [
+        u'x' * 8, u'\x0304,12red']
+    assert ircchat.split_message(u'x' * 6 + u'\x0304,12red', 10) == [
+        u'x' * 6, u'\x0304,12red']
 
 
 def test_mirc_encode(ircchat):
@@ -337,6 +342,25 @@ def test_nick_in_use(users, engine, script, session, cfg):
     assert nicks == [u'NICK marty', u'NICK marty_', u'NICK marty1']
     assert u'Connected to 127.0.0.1 as marty1' in u'\n'.join(
         screen_of(before).display)
+
+
+def test_long_line(users, engine, script, session, cfg):
+    # a line longer than the screen, and than a message, may be typed: it
+    # scrolls as it is typed, and is sent as several messages.
+    ircd = FakeIRCd()
+    ircd.start()
+    configure(cfg, ircd)
+    ircchat = script(SCRIPT)
+    words = u' '.join(u'word{0:03d}'.format(num) for num in range(100))
+    before, _ = run_chat(engine, ircchat, [1.0, words, 0.5, u'\r', 1.0,
+                                           u'/quit\r'], until=u'\r')
+    ircd.done.set()
+    sent = [line[len(u'PRIVMSG #bttf :'):] for line in ircd.received
+            if line.startswith(u'PRIVMSG #bttf :')]
+    assert len(words) == 799 and len(sent) == 2
+    assert u' '.join(sent) == words
+    row = screen_of(before).display[-1]
+    assert row.startswith(u'[#bttf] ') and row.rstrip().endswith(u'word099')
 
 
 def test_server_silent(users, engine, script, session, cfg):

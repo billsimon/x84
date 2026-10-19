@@ -27,7 +27,8 @@ Options of section ``[irc]``:
 - ``enable_privnotice``: whether to display notices of the server, such
   as while connecting.
 - ``max_scrollback``: messages kept to scroll back to, ``200``;
-  ``max_input``, the longest line typed, ``200``.
+  ``max_input``, the longest line typed, ``1000``, sent as several
+  messages when it is longer than one.
 - ``color_inputbar``: color of the input line's prompt, ``reverse``;
   ``syncterm_font``, the font of SyncTERM, ``topaz``.
 """
@@ -56,8 +57,9 @@ from jaraco.stream.buffer import LenientDecodingLineBuffer
 #: how many messages of scrollback to keep.
 MAX_SCROLLBACK = get_ini('irc', 'max_scrollback', getter='getint') or 200
 
-#: how many characters of input to allow.
-MAX_INPUT = get_ini('irc', 'max_input', getter='getint') or 200
+#: how many characters of input to allow; a line longer than a message is
+#: sent as several.
+MAX_INPUT = get_ini('irc', 'max_input', getter='getint') or 1000
 
 #: irc server
 SERVER = get_ini('irc', 'server') or 'irc.libera.chat'
@@ -464,7 +466,8 @@ def split_message(text, limit=MESSAGE_BYTES):
     """
     Return ``text`` split to messages of at most ``limit`` bytes of utf-8.
 
-    Messages are split at spaces, where they may be, else of characters.
+    Messages are split at spaces, where they may be, else of characters,
+    but not within a color code.
     """
     messages = []
     while len(text.encode('utf8')) > limit:
@@ -479,6 +482,14 @@ def split_message(text, limit=MESSAGE_BYTES):
         space = text.rfind(u' ', 0, end + 1)
         if space > 0:
             end = space
+        else:
+            # a color code, of at most 6 characters, is not split.
+            for start in range(max(0, end - 5), end):
+                if text[start] == u'\x03':
+                    match = RE_COLOR.match(text, start + 1)
+                    if match and match.end() > end:
+                        end = start
+                        break
         messages.append(text[:end])
         text = text[end:].lstrip(u' ')
     if text:
