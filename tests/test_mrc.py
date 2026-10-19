@@ -197,6 +197,10 @@ def test_colors(script, session):
         u'\x1b[36m')
     assert mrcchat.style_sequence(ansi, Style(8, None)).endswith(
         u'\x1b[1m\x1b[30m')
+    xterm8 = blessed.Terminal(kind='xterm', force_styling=True)
+    assert xterm8.number_of_colors == 8
+    assert mrcchat.style_sequence(xterm8, Style(8, None)).endswith(
+        u'\x1b[1m\x1b[30m\x1b[90m')
 
     # black of a black background is hidden, written as spaces; black of
     # another background is not.

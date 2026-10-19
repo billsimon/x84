@@ -147,8 +147,12 @@ def style_sequence(term, style):
         elif term.number_of_colors >= 16:
             parts.append(term.color(color + 8))
         else:
-            # bright, as of an ansi terminal, by bold.
+            # bright, as of an ansi terminal, by bold; and of the bright
+            # color of most others, of 8 colors by their terminfo, such as
+            # xterm-color, which display bold of the normal color.
             parts.extend((term.bold, term.color(color)))
+            if not (term.kind or u'').startswith('ansi'):
+                parts.append(u'\x1b[{0}m'.format(90 + color))
     if bg:
         parts.append(term.on_color(DOS_ANSI[bg]))
     return u''.join(parts)
