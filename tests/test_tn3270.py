@@ -886,6 +886,18 @@ def test_logon_screen(cfg):
     assert client.help_pending == 'help'
 
 
+def test_logon_screen_logo_aligned(cfg):
+    # the rows of the large letters, of differing lengths, are aligned.
+    cfg.set('system', 'bbsname', 'bttfbbs')
+    client, terminal, error = negotiate(cfg, 'IBM-3279-2-E', QUERY_REPLY)
+    display = Display(rows=27, columns=132)
+    display.write(terminal.records[-1])
+    logo = tn3270.block_letters(u'bttfbbs', 128)
+    left = (132 - max(len(line) for line in logo)) // 2
+    for idx, line in enumerate(logo):
+        assert display.line(1 + idx)[left:].rstrip() == line
+
+
 def test_block_letters():
     assert tn3270.block_letters(u'hi', 80) == [
         u'H   H IIIII', u'H   H   I', u'HHHHH   I', u'H   H   I',

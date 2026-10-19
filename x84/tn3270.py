@@ -1419,8 +1419,10 @@ class TN3270Client(BaseClient):
         now = time.localtime()
         logo = block_letters(bbsname, self.columns - 4)
         top = 1 if self.rows < 30 else 3
-        items = [(top + idx, (self.columns - len(line)) // 2, COLORS['cyan'],
-                  line) for idx, line in enumerate(logo)]
+        # centered as a whole, its rows being of differing lengths.
+        logo_left = (self.columns - max(len(line) for line in logo)) // 2
+        items = [(top + idx, logo_left, COLORS['cyan'], line)
+                 for idx, line in enumerate(logo)]
         row = top + len(logo) + 1
         left = max(2, (self.columns - 60) // 2)
         for label, value in (
