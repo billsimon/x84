@@ -235,7 +235,7 @@ def init_bbs_ini():
     cfg_bbs.set('irc', 'port', '6697')
     cfg_bbs.set('irc', 'channel', '#x84')
     cfg_bbs.set('irc', 'enable_privnotice', 'yes')
-    cfg_bbs.set('irc', 'maxnick', '9')
+    cfg_bbs.set('irc', 'maxnick', '16')
     cfg_bbs.set('irc', 'ssl', 'yes')
     # some irc networks (such as EFnet) use self-signed certificates.
     cfg_bbs.set('irc', 'ssl_verify', 'yes')
