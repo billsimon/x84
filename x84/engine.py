@@ -30,7 +30,7 @@ import sys
 
 # local
 import x84.encodings  # noqa  provides alternate encodings
-from x84 import cmdline
+from x84 import cmdline, mrc
 from x84.db import DBHandler, LOCKS, thread_holder_alive, close_databases
 from x84.terminal import get_terminals, kill_session, find_tty
 from x84.fail2ban import get_fail2ban_function
@@ -70,6 +70,9 @@ def main():
         from x84 import msgpoll
         msgpoll.main()
 
+    # connect to multi relay chat, when enabled.
+    mrc.start()
+
     try:
         # begin main event loop
         _loop(servers)
@@ -98,6 +101,7 @@ def shutdown(servers):
             kill_session(client, 'server shutdown')
             del server.clients[key]
         server.server_socket.close()
+    mrc.stop()
     close_databases()
 
 
@@ -437,6 +441,11 @@ def session_recv(terminals, log, tap_events):
                             # target session has just disconnected.
                             pass
 
+            # 'mrc': a packet of multi relay chat, or joining or leaving it
+            elif event == 'mrc':
+                if mrc.HUB is not None:
+                    mrc.HUB.session_event(sid, data)
+
             # 'set-timeout': set user-preferred timeout
             elif event == 'set-timeout':
                 if tap_events:
@@ -534,6 +543,10 @@ def _loop(servers):
             except OSError as err:
                 # if the ipc closes while we poll, warn and continue
                 log.warning(err)
+
+        # send what multi relay chat received to its sessions
+        if mrc.HUB is not None:
+            mrc.HUB.deliver(terms)
 
         # send tcp data to clients
         client_send(terms, log)

@@ -183,6 +183,13 @@ def get_menu_items(session):
 
     ]
 
+    # add multi relay chat, when the bbs is connected to it.
+    if get_ini(section='mrc', key='enabled', getter='getboolean'):
+        menu_items.insert(1, MenuItem(inp_key=u'mrc',
+                                      text=u'multi relay chat',
+                                      script='mrcchat',
+                                      args=(), kwargs={}))
+
     # add sysop menu for sysop users, only.
     if session.user.is_sysop:
         menu_items.append(

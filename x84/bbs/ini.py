@@ -249,6 +249,20 @@ def init_bbs_ini():
     # some irc networks (such as EFnet) use self-signed certificates.
     cfg_bbs.set('irc', 'ssl_verify', 'yes')
 
+    # multi relay chat, of one connection of the bbs; see x84/mrc.py.
+    cfg_bbs.add_section('mrc')
+    cfg_bbs.set('mrc', 'enabled', 'no')
+    cfg_bbs.set('mrc', 'server', 'mrc.bottomlessabyss.net')
+    cfg_bbs.set('mrc', 'port', '5001')
+    cfg_bbs.set('mrc', 'ssl', 'yes')
+    cfg_bbs.set('mrc', 'ssl_verify', 'yes')
+    cfg_bbs.set('mrc', 'room', 'lobby')
+    cfg_bbs.set('mrc', 'info_web', '')
+    cfg_bbs.set('mrc', 'info_telnet', '')
+    cfg_bbs.set('mrc', 'info_ssh', '')
+    cfg_bbs.set('mrc', 'info_sysop', '')
+    cfg_bbs.set('mrc', 'info_desc', '')
+
     # new user account script
     cfg_bbs.add_section('nua')
     cfg_bbs.set('nua', 'script', 'nua')

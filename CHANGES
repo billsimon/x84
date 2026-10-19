@@ -34,6 +34,9 @@
     'connect_timeout'); SASL login by options 'sasl_user' and
     'sasl_password'.  Events of no reason, such as a QUIT, no longer end
     the chat.
+  - enhancement: multi relay chat (MRC), a chat of BBSes: the engine keeps
+    the bbs's one connection to the MRC server, of section [mrc], shared
+    by its users in the new script mrcchat ('mrc' of the main menu).
   - enhancement: dial-in modem callers, answered by datamodem, connect by
     the new x84-modem-bridge command to a modem server (section [modem]),
     with their connect rate and caller ID in the session environment, and
