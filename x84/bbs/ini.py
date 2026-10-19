@@ -191,6 +191,15 @@ def init_bbs_ini():
     cfg_bbs.set('modem', 'encoding', 'cp437')
     cfg_bbs.set('modem', 'art_min_rate', '2400')
 
+    # 3270 terminals, by tn3270, requires the 'tn3270' extra (pyte)
+    cfg_bbs.add_section('tn3270')
+    cfg_bbs.set('tn3270', 'enabled', 'no')
+    cfg_bbs.set('tn3270', 'addr', '127.0.0.1')
+    cfg_bbs.set('tn3270', 'port', '3270')
+    cfg_bbs.set('tn3270', 'codepage', 'bracket')
+    cfg_bbs.set('tn3270', 'term', 'xterm-256color')
+    cfg_bbs.set('tn3270', 'background', 'auto')
+
     # web
     cfg_bbs.add_section('web')
     cfg_bbs.set('web', 'enabled', 'no')

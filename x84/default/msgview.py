@@ -10,6 +10,7 @@ change are redrawn, for slow connections.
 Also :class:`TagPicker`, to choose tags from a list.
 """
 # std imports
+import contextlib
 import difflib
 import re
 
@@ -67,6 +68,23 @@ DEFAULT_COLORS = {
 RE_SGR = re.compile(r'\x1b\[[0-9;]*m')
 
 KEY_REDRAW = ctrl('l')
+
+#: keys of hints named by a word, such as 'Enter Read', and the PF keys of
+#: a 3270 terminal that page (see x84.tn3270).
+HINT_KEYS = {u'enter': u'\r', u'esc': u'\x1b', u'tab': u'\t', u'space': u' ',
+             u'pf7': u'\x1b[5~', u'pf8': u'\x1b[6~'}
+
+
+def hint_key(hint):
+    """ Return key of ``hint``, such as 'Q Quit', or None. """
+    word = hint.split(u' ', 1)[0]
+    if word.lower() in HINT_KEYS:
+        return HINT_KEYS[word.lower()]
+    if len(word) == 2 and word[0] == u'^' and word[1].isalpha():
+        return ctrl(word[1])
+    if len(word) == 1 and word.isalpha():
+        return word.lower()
+    return None
 
 
 def get_colors(term, section):
@@ -130,6 +148,9 @@ class MessageScreen(object):
         self.index = self.top = 0
         self.notice = None
         self.screen = {}
+        #: keys of hints displayed on bars, by row: (first, last, key) of
+        #: their columns.
+        self.hints = {}
         self.width = self.height = 0
         self.layout()
 
@@ -224,19 +245,55 @@ class MessageScreen(object):
                          self.term.normal, self.term.clear_eol))
 
     def draw_bar(self, yloc, left, right=u''):
-        """ Return sequence to display a title or status bar. """
+        """
+        Return sequence to display a title or status bar.
+
+        ``right`` is text justified right, or a list of hints, such as
+        ``['PF8 Down', 'Esc List']``.
+        """
+        items = [right] if isinstance(right, str) else right
+        items = [item.strip() for item in items if item.strip()]
+        right = u' '.join(items) + (u' ' if items else u'')
+        self.hints[yloc] = []
+        first = self.width - 1 - text_width(right)
+        for item in items:
+            if hint_key(item):
+                self.hints[yloc].append(
+                    (first, first + text_width(item), hint_key(item)))
+            first += text_width(item) + 1
         return self.draw_row(yloc, 'bar', fit(left, right, self.width - 1))
+
+    def page_hints(self):
+        """ Return hints of the keys paging, at a 3270 terminal. """
+        if self.session.kind != 'tn3270':
+            return []
+        return [u'PF7 Up', u'PF8 Down']
+
+    def page(self, delta, count):
+        """
+        Scroll the list a page up (``delta`` of -1) or down (1).
+
+        The selection moves as far, of ``count`` entries.
+        """
+        height = self.list_height
+        self.index = max(0, min(count - 1, self.index + delta * height))
+        self.top = max(0, min(count - height, self.top + delta * height))
 
     def draw_status(self, hints, right=u''):
         """ Return sequence to display status bar of key ``hints``. """
         if self.notice:
             return self.draw_bar(self.height - 1, u' ' + self.notice)
-        left = u''
+        left, keys = u'', []
         for hint in hints:
             if text_width(left + u' ' + hint + right) >= self.width - 1:
                 break
+            first = text_width(left) + 1
             left += u' ' + hint
-        return self.draw_bar(self.height - 1, left, right)
+            if hint_key(hint):
+                keys.append((first, text_width(left), hint_key(hint)))
+        result = self.draw_bar(self.height - 1, left, right)
+        self.hints[self.height - 1] = keys
+        return result
 
     def prompt(self, notice):
         """ Display ``notice`` on status bar and return next keystroke. """
@@ -252,6 +309,41 @@ class MessageScreen(object):
         return self.prompt(u'{0} (y/N)'.format(question)).lower() == u'y'
 
     # input
+
+    @contextlib.contextmanager
+    def mouse(self):
+        """
+        Context manager reporting clicks of the mouse, as keystrokes.
+
+        Only for 3270 terminals, whose cursor, by ENTER, is the mouse (see
+        x84.tn3270), for now: clicks are handled by :meth:`clicked`.
+        """
+        if self.session.kind != 'tn3270':
+            yield
+            return
+        with self.term.mouse_enabled():
+            yield
+
+    def clicked(self, inp):
+        """
+        Return (row, column) of keystroke ``inp`` of a click, or None.
+
+        Hints displayed on bars, such as 'Q Quit', are performed when
+        clicked: their key is read next, and ``()`` is returned, as for
+        other mouse events, which are ignored.  None is returned for other
+        keystrokes.
+        """
+        if not (inp.name or u'').startswith('MOUSE_'):
+            return None
+        if inp.name != 'MOUSE_LEFT':
+            return ()
+        yloc, xloc = inp.mouse_yx
+        for first, last, key in self.hints.get(yloc, ()):
+            if first <= xloc < last:
+                self.session.buffer_input(
+                    key.encode(self.session.encoding), pushback=True)
+                return ()
+        return (yloc, xloc)
 
     def read_key(self):
         """
@@ -377,7 +469,8 @@ class MessageScreen(object):
         height = self.list_height
         if self.index < self.top or self.index >= self.top + height:
             self.top = max(0, self.index - height // 2)
-        output = [self.draw_bar(0, *self.list_title()),
+        title, right = self.list_title()
+        output = [self.draw_bar(0, title, self.page_hints() + [right]),
                   self.draw_row(1, 'header', self.list_header())]
         for yloc in range(height):
             idx = self.top + yloc
@@ -405,6 +498,11 @@ class MessageScreen(object):
 
     def run(self):
         """ Display message list until quit. """
+        with self.mouse():
+            return self.run_list()
+
+    def run_list(self):
+        """ Display message list until quit, see :meth:`run`. """
         term = self.term
         self.clear()
         while True:
@@ -413,6 +511,14 @@ class MessageScreen(object):
             if inp is None:
                 continue
             self.notice = None
+            click = self.clicked(inp)
+            if click is not None:
+                # a message clicked is read.
+                if click and 2 <= click[0] < 2 + self.list_height and (
+                        self.top + click[0] - 2 < len(self.entries)):
+                    self.index = self.top + click[0] - 2
+                    self.reader()
+                continue
             code = self.code(inp)
             last = len(self.entries) - 1
             msg = self.selected
@@ -421,9 +527,9 @@ class MessageScreen(object):
             elif code == term.KEY_DOWN:
                 self.index = max(0, min(last, self.index + 1))
             elif code == term.KEY_PGUP:
-                self.index = max(0, self.index - self.list_height)
+                self.page(-1, len(self.entries))
             elif code == term.KEY_PGDOWN:
-                self.index = max(0, min(last, self.index + self.list_height))
+                self.page(1, len(self.entries))
             elif code == term.KEY_HOME:
                 self.index = 0
             elif code == term.KEY_END:
@@ -515,7 +621,8 @@ class MessageScreen(object):
             height = self.text_height
             last_top = max(0, len(rows) - height)
             top = min(top, last_top)
-            output = [self.draw_bar(0, *self.reader_title(msg))]
+            title, right = self.reader_title(msg)
+            output = [self.draw_bar(0, title, self.page_hints() + [right])]
             for yloc in range(height):
                 idx = top + yloc
                 style, text = rows[idx] if idx < len(rows) else ('text', u'')
@@ -529,7 +636,7 @@ class MessageScreen(object):
             echo(u''.join(output))
 
             inp = self.read_key()
-            if inp is None:
+            if inp is None or self.clicked(inp) is not None:
                 continue
             self.notice = None
             code = self.code(inp)
@@ -622,8 +729,8 @@ class TagPicker(MessageScreen):
         height = self.list_height
         if self.index < self.top or self.index >= self.top + height:
             self.top = max(0, self.index - height // 2)
-        output = [self.draw_bar(0, u' ' + self.title,
-                                u'{0} chosen '.format(len(self.chosen)))]
+        output = [self.draw_bar(0, u' ' + self.title, self.page_hints() + [
+            u'{0} chosen '.format(len(self.chosen))])]
         width = max([12] + [text_width(tag) + 1 for tag in self.entries])
         width = min(width, max(12, self.width - 24))
         for yloc in range(height):
@@ -666,6 +773,11 @@ class TagPicker(MessageScreen):
 
     def run(self):
         """ Return sorted list of tags chosen, or None when canceled. """
+        with self.mouse():
+            return self.run_picker()
+
+    def run_picker(self):
+        """ Return tags chosen, see :meth:`run`. """
         term = self.term
         self.clear()
         while True:
@@ -674,6 +786,15 @@ class TagPicker(MessageScreen):
             if inp is None:
                 continue
             self.notice = None
+            click = self.clicked(inp)
+            if click is not None:
+                # a tag clicked is chosen, or no longer.
+                if click and 1 <= click[0] <= self.list_height and (
+                        self.top + click[0] - 1 < len(self.entries)):
+                    self.index = self.top + click[0] - 1
+                    self.chosen.symmetric_difference_update(
+                        [self.entries[self.index]])
+                continue
             code = self.code(inp)
             last = len(self.entries) - 1
             if code == term.KEY_UP:
@@ -681,9 +802,9 @@ class TagPicker(MessageScreen):
             elif code == term.KEY_DOWN:
                 self.index = max(0, min(last, self.index + 1))
             elif code == term.KEY_PGUP:
-                self.index = max(0, self.index - self.list_height)
+                self.page(-1, len(self.entries))
             elif code == term.KEY_PGDOWN:
-                self.index = max(0, min(last, self.index + self.list_height))
+                self.page(1, len(self.entries))
             elif code == term.KEY_HOME:
                 self.index = 0
             elif code == term.KEY_END:

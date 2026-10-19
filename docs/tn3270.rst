@@ -1,0 +1,213 @@
+================
+3270 terminals
+================
+
+x/84 can be reached by IBM 3270 terminals, by way of the tn3270 protocol:
+x3270_, c3270 and wc3270, Vista TN3270, IBM Personal Communications, or a
+mainframe user's emulator of choice.
+
+A 3270 does not send each key as it is pressed, as the character
+terminals the board is written for do.  It displays a form, which is
+filled in at the terminal, and sent only when an *attention* key, such as
+ENTER or a PF key, is pressed.  So the tn3270 server keeps a virtual ANSI
+terminal for each session, and draws its screen on the 3270: every script
+works unchanged, its colors and characters translated to those of the
+3270.
+
+Setting it up
+=============
+
+1. Install pyte_, which the tn3270 server requires, by the ``tn3270``
+   extra::
+
+    pip install x84[tn3270]
+
+2. Enable the tn3270 server in ``~/.x84/default.ini``::
+
+    [tn3270]
+    enabled = yes
+
+   It listens on ``127.0.0.1`` port 3270 by default; set ``addr`` to
+   ``0.0.0.0`` to listen on all addresses.
+
+3. Connect, such as by c3270::
+
+    c3270 -model 3279-2-E localhost:3270
+
+Using the board
+===============
+
+A logon screen, as of VTAM, is displayed on connecting: the board's name
+in large letters, the name of the terminal, its model, the date and time,
+and the PF keys.  ENTER continues, to the board's login.
+
+The bottom row of the 3270 is for typing, after ``Command ===>``, as of
+ISPF, and ENTER sends what was typed.  It is followed by Return when the
+board displays it, as a prompt of a line does; when the board takes it as
+a key instead, such as ``q`` to quit, it is not, so that no Return remains
+to be taken as another key.  ENTER alone is Return.
+
+Or move the cursor onto a choice of a menu, such as ``[weather] forecast``
+of the main menu, or of a list, such as a message, and press ENTER to
+choose it; or onto a key named at the bottom of the screen, such
+as ``Q Quit``, to press it.  Lists and messages are paged by PF7 and PF8,
+named at the top of the screen, where they may be pressed by the cursor,
+too, for keyboards without them.
+
+The PF keys are named as by ISPF, and send what was typed, followed by the
+key each stands for:
+
+==============  ====================================================
+Key             Sends what was typed, followed by
+==============  ====================================================
+PF1             HELP: nothing; it displays a page describing the keys
+PF2             Backspace
+PF3             END: Escape, back, or the menu of the editor
+PF4             nothing more, for prompts that take a single key
+PF5, PF6        Up, Down
+PF7, PF8        UP, DOWN: Page Up, Page Down
+PF9             Home
+PF10, PF11      Left, Right
+PF12            CANCEL: Escape
+==============  ====================================================
+
+PF13-PF24 are the same as PF1-PF12, but PF16 is Tab and PF21 is End.  PA1
+displays the page of keys, as PF1; CLEAR and PA2 draw the screen again.
+After each key, the keyboard is locked until the board has answered.
+
+The cursor of the board is shown underscored.  At the board's login, the
+input row is labeled ``Login ===>``; when the cursor follows a prompt of a
+password, it is labeled ``Password ===>`` and does not display what is
+typed.
+
+The editor
+----------
+
+The editor's window is typed in, each of its rows an input field, with
+the 3270's own keys: insert, delete, erase to the end of the field, and
+the cursor keys.  What was typed is sent by ENTER or a PF key:
+
+- ENTER adds a line, when the cursor follows the end of one.  Typing that
+  reaches the end of a row continues on the next, as one line.
+- PF3 (or PF12) displays the menu: type ``s`` to save, ``a`` to abort, and
+  others, after ``Command ===>``, and press ENTER.  These may also be typed
+  at any time.  PF1 displays the editor's help.
+- PF7 and PF8 page up and down.
+
+A line is removed by erasing all of its rows.
+
+Terminals
+=========
+
+The size of the screen is that of the terminal's model, reported as its
+terminal type:
+
+=============  ============
+Model          Rows x cols
+=============  ============
+3278/3279-2    24 x 80
+3278/3279-3    32 x 80
+3278/3279-4    43 x 80
+3278/3279-5    27 x 132
+=============  ============
+
+The board is given one row fewer, the input row being the 3270's.
+A terminal type ending ``-E`` (an *extended* terminal, as most emulators
+are), or ``IBM-DYNAMIC``, is asked its size and features by a query, and
+when it answers, a size other than its model's (such as x3270's
+``-oversize``) is used.  Only a terminal that answers is sent colors and
+highlighting; others are drawn in one color, with ``#`` for blocks of
+ANSI art.
+
+The x3270 family displays 16 colors, which are nearly one for each ANSI
+color, normal and bright:
+
+=========  ==============  ================
+ANSI       Normal          Bright
+=========  ==============  ================
+black      (black)         deep blue
+red        red             red
+green      pale green      green
+yellow     yellow          yellow
+blue       deep blue       blue
+magenta    purple          pink
+cyan       pale turquoise  turquoise
+white      white           white
+=========  ==============  ================
+
+as c3270 displays them at a terminal of 16 colors: the extended colors as
+normal ANSI colors, and those of the 3279 as bright ones.  Grey and orange
+are not used, which c3270 displays as black and red at a terminal of 8
+colors.  Characters on a colored background, such as a lightbar, are of
+their colors on it.  A 3279 displays 7 colors: bright and normal ANSI
+colors are displayed the same, dark gray in blue, and characters on a
+colored background in reverse video of that background's color.
+Terminals tell which they display when asked, as an extended terminal is.
+
+c3270 4.5 displays dark colors at a terminal whose type is of 256 colors
+but which does not change them, as the Terminal of macOS: run it of
+terminal type ``xterm-16color`` there.  Not ``xterm-color``, whose keys F1
+to F4 are not those of the terminal: c3270 then types ``OP`` for PF1,
+and the like, rather than pressing the PF key.
+
+DX3270, for the Mac, displays the 7 colors of a 3279, and background
+colors too, when option ``background`` is ``yes``.
+
+Block characters of ANSI art are blocks of their color, line drawing
+characters are of ``-``, ``|`` and ``+``, and any other character not of
+the terminal's code page is ``?``.
+
+Options
+=======
+
+All of section ``[tn3270]``:
+
+- ``enabled``: whether to listen for 3270 terminals, ``no`` by default.
+- ``addr``, ``port``: where to listen, ``127.0.0.1`` and ``3270``.
+- ``codepage``: the EBCDIC code page of terminals, ``bracket`` by default:
+  that of the x3270 family by default, cp037 (U.S. and Canada) with its
+  brackets moved.  Other values are named as by python, such as
+  ``cp037``, for terminals of the true cp037; ``cp273`` (Germany),
+  ``cp500`` (international) and ``cp1140`` (cp037, with the euro sign).
+  When ``[`` and ``]`` are displayed as ``Ý`` and ``¨``, or the reverse,
+  choose between ``bracket`` and ``cp037``.
+- ``term``: terminal type of sessions, ``xterm-256color``.
+- ``background``: whether characters on a colored background are
+  displayed in their colors on it, ``yes``, or in reverse video of the
+  background's color, ``no``.  ``auto``, by default, is ``yes`` for
+  terminals of 16 colors, as the x3270 family.  Should a terminal refuse
+  its screens, set ``no``.
+
+In scripts
+==========
+
+The session of a 3270 terminal has ``session.kind`` of ``'tn3270'``, and
+``session.env['TN3270_TTYPE']`` is its terminal type, such as
+``IBM-3279-2-E``.  Its keys arrive only when an attention key is pressed.
+
+There are no control keys: a script should offer another key for any
+action of a control key, as the editor does by its menu (Escape).
+
+A script may ask for clicks of the mouse to be reported, such as by
+blessed's ``term.mouse_enabled()``: ENTER, with the cursor of the 3270 on
+the bbs's screen and nothing typed, is then a click of the left button
+there.  The message lists of :mod:`msgview` do, and the hints of their
+bars, such as ``Q Quit``, are their keys when clicked.  So do menus of
+:func:`common.render_menu_entries`, as the main menu: see
+:func:`common.locate_menu_entries`, :func:`common.menu_clicks` and
+:func:`common.clicked_entry`.
+
+A script may declare rows of the screen input fields, as the editor does,
+by writing ``\x1b]3270;fields;top;bottom\x07``, of their first and last
+rows, and ``\x1b]3270;fields\x07`` when no longer.  Each row is typed
+over at the terminal, its last column excepted, and attention keys are
+then not keystrokes, but session events named ``'tn3270'``, of a dict:
+
+- ``aid``: the key, ``'enter'`` or ``'pf1'`` to ``'pf12'``.
+- ``text``: what was typed after ``Command ===>``.
+- ``fields``: text of the rows that were typed over, by row.
+- ``cursor``: ``(row, column)`` of the cursor, or None when not on the
+  bbs's screen.
+
+.. _x3270: https://x3270.miraheze.org/
+.. _pyte: https://github.com/selectel/pyte

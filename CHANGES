@@ -32,6 +32,15 @@
   - enhancement: the engine stops reading a session's output while its
     client has much unsent, so that the session waits rather than queueing
     output without limit; for modem callers, beyond 2 KB.
+  - enhancement: IBM 3270 terminals connect by the new tn3270 server
+    (section [tn3270], requiring the 'tn3270' extra), which draws a virtual
+    ANSI terminal of each session on the 3270, of its colors (16, of the
+    x3270 family, nearly one for each ANSI color) and EBCDIC code page.
+    What is typed at the bottom row is sent by ENTER or a PF key, standing
+    for Escape, the cursor keys, and others; the cursor, by ENTER, chooses
+    from menus and message lists and presses keys named on their bars; and
+    the editor's window is typed in, its rows input fields.  A logon
+    screen, the command line and PF keys are as of VTAM and ISPF.
   - removed: the shroo.ms intra-bbs oneliners integration (its parse.com
     backend was discontinued).
   - security: sftp permitted non-sysop users to overwrite any existing file,

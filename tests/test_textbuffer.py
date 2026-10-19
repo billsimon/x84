@@ -200,3 +200,45 @@ def test_modified_and_empty():
     assert buf.is_empty and not buf.modified
     buf.insert(u' ')
     assert buf.is_empty and buf.modified
+
+
+def test_replace_rows():
+    # rows as typed over at a 3270 terminal: a wrapped row keeps the space
+    # separating it from the next.
+    buf = TextBuffer(u'hello world foo bar\r\nsecond', width=10)
+    assert displayed(buf) == [u'hello ', u'world foo ', u'bar', u'second']
+    assert buf.replace_rows({1: u'WORLD foo'})
+    assert buf.paragraphs == [u'hello WORLD foo bar', u'second']
+    assert not buf.replace_rows({0: u'hello'})
+    # a row erased of a paragraph of one row removes it.
+    assert buf.replace_rows({3: u''})
+    assert buf.paragraphs == [u'hello WORLD foo bar']
+    assert buf.modified
+    buf.undo()
+    assert buf.paragraphs == [u'hello WORLD foo bar', u'second']
+
+
+def test_replace_rows_past_end():
+    buf = TextBuffer(u'one', width=10)
+    # a row typed to its end is continued by the next; blank rows between
+    # are blank paragraphs.
+    assert buf.replace_rows({2: u'abcdefghij', 3: u' klm', 5: u'x'})
+    assert buf.paragraphs == [u'one', u'', u'abcdefghij klm', u'', u'x']
+    # including the last row of the document.
+    buf = TextBuffer(u'', width=10)
+    assert buf.replace_rows({0: u'abcdefghij', 1: u'k'})
+    assert buf.paragraphs == [u'abcdefghijk']
+
+
+def test_replace_rows_max_length():
+    buf = TextBuffer(u'abc', width=10, max_length=5)
+    assert not buf.replace_rows({0: u'abcdefgh'})
+    assert buf.paragraphs == [u'abc']
+
+
+def test_locate():
+    buf = TextBuffer(u'hello world foo\r\nsecond', width=10)
+    buf.locate(1, 3)
+    assert (buf.para, buf.pos) == (0, 9)
+    buf.locate(9, 40)
+    assert (buf.para, buf.pos) == (1, 6)

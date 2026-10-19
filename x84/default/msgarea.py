@@ -24,6 +24,9 @@ from x84.bbs import (
     echo,
 )
 from common import (
+    locate_menu_entries,
+    read_menu_input,
+    menu_clicks,
     render_menu_entries,
     show_description,
     display_banner,
@@ -253,6 +256,7 @@ def main(quick=False):
     yloc = top_margin = 0
     subscription = session.user.get('msg_subscription', [])
     dirty = 2
+    entries = []
 
     while True:
         if dirty == 2:
@@ -294,6 +298,10 @@ def main(quick=False):
                 term=term, description=txt, color=None,
                 subsequent_indent=' ' * len('message area: '))
 
+            # where menu items are, to be chosen by the mouse (at a 3270).
+            entries = locate_menu_entries(
+                term=term, top_margin=yloc, menu_items=get_menu(messages),
+                colors=colors, max_cols=2)
             echo(render_menu_entries(
                 term=term, top_margin=yloc,
                 menu_items=get_menu(messages),
@@ -302,7 +310,16 @@ def main(quick=False):
             echo(colors['backlight'](u' \b'))
             dirty = False
 
-        event, data = session.read_events(('refresh', 'newmsg', 'input'))
+        given_inp = None
+        with menu_clicks(term):
+            event, data = session.read_events(
+                ('refresh', 'newmsg', 'input'))
+            if event == 'input':
+                # on input, block until carriage return, or a menu item is
+                # clicked.
+                session.buffer_input(data, pushback=True)
+                given_inp = read_menu_input(LineEditor(
+                    1, colors={'highlight': colors['backlight']}), entries)
 
         if event == 'refresh':
             # screen resized, redraw.
@@ -323,12 +340,6 @@ def main(quick=False):
                 continue
 
         elif event == 'input':
-            # on input, block until carriage return
-            session.buffer_input(data, pushback=True)
-            given_inp = LineEditor(
-                1, colors={'highlight': colors['backlight']}
-            ).read()
-
             if given_inp is None:
                 # escape/cancel
                 continue

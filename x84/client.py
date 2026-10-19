@@ -49,6 +49,8 @@ class BaseClient(object):
                          ])
         self.send_buffer = bytearray()
         self.recv_buffer = bytearray()
+        #: events for the session, other than its input, as (event, data).
+        self.events = []
         # the send buffer is written by both the engine's main loop and
         # the on-connect negotiation thread, and the receive buffer may be
         # read by the negotiation thread while the main loop fills it.
@@ -173,6 +175,11 @@ class BaseClient(object):
             data = bytes(self.recv_buffer)
             self.recv_buffer = bytearray()
         return data
+
+    def pop_events(self):
+        """ Return events for the session, as (event, data), and forget them. """
+        events, self.events = self.events, []
+        return events
 
     def unget_input(self, data):
         """ Return ``data`` to the front of the receive buffer. """

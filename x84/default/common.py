@@ -1,11 +1,12 @@
 """ Common interface utility functions for x/84. """
 # std imports
+import contextlib
 import os
 import math
 
 # local
 from x84.bbs import echo, showart, get_ini
-from x84.bbs import getterminal, LineEditor
+from x84.bbs import getsession, getterminal, LineEditor
 
 
 def decorate_menu_item(menu_item, colors):
@@ -38,6 +39,21 @@ def render_menu_entries(term, top_margin, menu_items,
     :param int max_cols: maximum number of columns rendered.
     :param int max_row_spacing: maximum vertical row spacing.
     :rtype: str
+    """
+    return layout_menu_entries(term, top_margin, menu_items, colors,
+                               max_cols, max_rowsp)[0]
+
+
+def layout_menu_entries(term, top_margin, menu_items,
+                        colors=None, max_cols=3, max_rowsp=2):
+    """
+    Return menu items rendered, and where each is displayed.
+
+    Arguments are those of :func:`render_menu_entries`.
+
+    :returns: ``(output, entries)``: the output of
+        :func:`render_menu_entries`, and a list of ``(row, column, width,
+        menu_item)`` of each, its row counted from the first.
     """
     # we take measured effects to do this operation much quicker when
     # colored_menu_items is set False to accommodate slower systems
@@ -75,7 +91,11 @@ def render_menu_entries(term, top_margin, menu_items,
 
     column = 1
     output = u''
+    entries = []
     for idx, item in enumerate(rendered_menuitems):
+        entries.append(((idx // n_columns) * row_spacing,
+                        xpos + (column - 1) * padding, column_widths[idx],
+                        menu_items[idx]))
         padding_left = term.move_x(xpos) if column == 1 and xpos else u''
         padding_right = ' ' * (padding - column_widths[idx])
         if idx == len(rendered_menuitems) - 1:
@@ -86,7 +106,87 @@ def render_menu_entries(term, top_margin, menu_items,
             padding_right = u'\r\n' * row_spacing
         column = 1 if column == n_columns else column + 1
         output = u''.join((output, padding_left, item, padding_right))
-    return output
+    return output, entries
+
+
+def locate_menu_entries(term, top_margin, menu_items,
+                        colors=None, max_cols=3, max_rowsp=2):
+    """
+    Return where menu items are displayed, when rendered at the cursor.
+
+    Only at a 3270 terminal, whose cursor is the mouse (see x84.tn3270), for
+    now, as it is asked the location of the cursor: an empty list, at
+    others.  Arguments are those of :func:`render_menu_entries`.
+
+    :returns: list of ``(row, first column, last column, menu_item)``.
+    """
+    if getsession().kind != 'tn3270':
+        return []
+    row, _ = term.get_location(timeout=1)
+    if row < 0:
+        return []
+    entries = layout_menu_entries(term, top_margin, menu_items, colors,
+                                  max_cols, max_rowsp)[1]
+    return [(row + offset, column, column + width, item)
+            for offset, column, width, item in entries]
+
+
+@contextlib.contextmanager
+def menu_clicks(term):
+    """
+    Context manager reporting clicks of the mouse, while a menu is read.
+
+    Only at a 3270 terminal, whose cursor, by ENTER, is the mouse (see
+    x84.tn3270), for now.  Clicks are keystrokes of :func:`clicked_entry`.
+    """
+    if getsession().kind != 'tn3270':
+        yield
+        return
+    with term.mouse_enabled():
+        yield
+
+
+def is_mouse(inp):
+    """ Whether keystroke ``inp`` is of the mouse. """
+    return (inp.name or u'').startswith('MOUSE_')
+
+
+def clicked_entry(entries, inp):
+    """
+    Return the menu item clicked by keystroke ``inp``, or None.
+
+    :param list entries: as returned by :func:`locate_menu_entries`.
+    """
+    if inp.name != 'MOUSE_LEFT':
+        return None
+    yloc, xloc = inp.mouse_yx
+    for row, first, last, item in entries:
+        if row == yloc and first <= xloc < last:
+            return item
+    return None
+
+
+def read_menu_input(editor, entries):
+    """
+    Read a menu choice by line editor ``editor``, until ENTER or ESCAPE.
+
+    Returns what was typed, or None when canceled; or the key of a menu
+    item clicked, of ``entries``, as returned by :func:`locate_menu_entries`.
+    """
+    term = getterminal()
+    echo(editor.refresh())
+    while True:
+        inp = term.inkey()
+        if is_mouse(inp):
+            item = clicked_entry(entries, inp)
+            if item is not None:
+                return item.inp_key
+            continue
+        echo(editor.process_keystroke(inp))
+        if editor.quit:
+            return None
+        if editor.carriage_returned:
+            return editor.content
 
 
 def waitprompt(term):

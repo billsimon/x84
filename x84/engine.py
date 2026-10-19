@@ -142,6 +142,12 @@ def get_servers(CFG):
         # start modem server instance, for x84-modem-bridge
         from x84.modem import ModemServer
         servers.append(ModemServer(config=CFG))
+
+    if server_enabled(CFG, 'tn3270'):
+        # start tn3270 server instance, for 3270 terminals.  Requires pyte,
+        # of the 'tn3270' extra.
+        from x84.tn3270 import TN3270Server
+        servers.append(TN3270Server(config=CFG))
     return servers
 
 
@@ -292,9 +298,14 @@ def session_send(terminals):
     sessions for idle timeout, signaling exit to subprocess when reached.
     """
     for _, tty in terminals:
-        if tty.client.input_ready():
+        if tty.client.input_ready() or tty.client.events:
             try:
-                tty.master_write.send(('input', tty.client.get_input()))
+                if tty.client.input_ready():
+                    tty.master_write.send(('input', tty.client.get_input()))
+                # other events of the client, such as the fields of a 3270
+                # terminal, see x84.tn3270.
+                for event, data in tty.client.pop_events():
+                    tty.master_write.send((event, data))
             except OSError:
                 # this may happen if a sub-process crashes, or more often,
                 # because the subprocess has logged off, but the user kept

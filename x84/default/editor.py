@@ -11,6 +11,12 @@ the status bar, or chosen from a menu by pressing Escape:
 - ``^W`` deletes the word left of the cursor, ``^D`` the character under
   it, and ``^V`` (or Insert) toggles insert and overwrite mode.
 
+At a 3270 terminal (see x84.tn3270), each row of text is an input field,
+typed over at the terminal and sent by ENTER or a PF key, which may add a
+line (ENTER, at the end of one), page (PF7, PF8), display help (PF1), or
+the menu (PF3, PF12).  A command may be typed by its letter, as a command
+(after ``Command ===>``).
+
 The editor draws only ASCII, so that it displays the same for utf8 and
 cp437 terminals.  Its colors may be changed in section ``[editor]`` of
 the configuration: ``color_text``, ``color_quote``, ``color_bar``,
@@ -114,6 +120,18 @@ def is_escape(term, inp):
             inp[:1] == u'\x1b')
 
 
+def declare_fields(top=None, bottom=None):
+    """
+    Return sequence making rows ``top`` to ``bottom`` input fields.
+
+    Only for a 3270 terminal, see x84.tn3270; without arguments, no rows
+    are input fields.
+    """
+    if top is None:
+        return u'\x1b]3270;fields\x07'
+    return u'\x1b]3270;fields;{0};{1}\x07'.format(top, bottom)
+
+
 def discard_csi(term):
     """ Discard remainder of an unrecognized CSI sequence. """
     while True:
@@ -143,6 +161,10 @@ class Editor(object):
         self.last_key = None
         self.top = 0
         self.screen = {}
+        #: whether rows of text are input fields of a 3270 terminal, and
+        #: the rows declared so.
+        self.fields = self.session.kind == 'tn3270'
+        self.declared = None
         self.width = self.height = 0
         self.layout()
 
@@ -191,17 +213,23 @@ class Editor(object):
         """ Return (left, right) text of status bar. """
         if self.notice:
             return u' ' + self.notice, u''
-        hints = [(u'Z', u'Save'), (u'A', u'Abort')]
-        if self.quote:
-            hints.append((u'Q', u'Quote'))
-        hints.append((u'G', u'Help'))
         col = self.buf.cursor_rowcol()[1]
-        right = u'Ln {0}/{1} Col {2} {3} '.format(
-            self.buf.para + 1, len(self.buf.paragraphs), col + 1,
-            u'OVR' if self.buf.overwrite else u'INS')
+        if self.fields:
+            hints = [u'Enter New line', u'PF1 Help', u'PF3 Menu',
+                     u'PF7/PF8 Page']
+            right = u'Ln {0}/{1} Col {2} '.format(
+                self.buf.para + 1, len(self.buf.paragraphs), col + 1)
+        else:
+            hints = [u'^Z Save', u'^A Abort']
+            if self.quote:
+                hints.append(u'^Q Quote')
+            hints.append(u'^G Help')
+            right = u'Ln {0}/{1} Col {2} {3} '.format(
+                self.buf.para + 1, len(self.buf.paragraphs), col + 1,
+                u'OVR' if self.buf.overwrite else u'INS')
         left = u''
-        for key, desc in hints:
-            item = u' ^{0} {1}'.format(key, desc)
+        for hint in hints:
+            item = u' ' + hint
             if text_width(left + item + right) >= self.width - 1:
                 break
             left += item
@@ -229,20 +257,99 @@ class Editor(object):
                 if RE_QUOTED.match(self.buf.paragraphs[rows[idx][0]]):
                     style = 'quote'
             output.append(self.draw_row(1 + yloc, style, text))
-        output.append(self.draw_bar(0, u' ' + self.title, u'Esc Menu '))
+        output.append(self.draw_bar(0, u' ' + self.title, u'{0} Menu '.format(
+            u'PF3' if self.fields else u'Esc')))
         output.append(self.draw_bar(self.height - 1, *self.status_text()))
+        if self.fields and self.declared != (1, height):
+            self.declared = (1, height)
+            output.append(declare_fields(1, height))
         output.append(term.move(1 + row - self.top, min(col, self.width - 1)))
         echo(u''.join(output))
+
+    def leave_fields(self):
+        """ Make rows of text no longer input fields of a 3270 terminal. """
+        if self.declared:
+            self.declared = None
+            echo(declare_fields())
 
     def prompt(self, notice):
         """ Display ``notice`` on status bar and return next keystroke. """
         self.notice = notice
         self.render()
+        # at a 3270, the cursor is then of the input row, see x84.tn3270.
         echo(self.term.move(self.height - 1,
                             min(self.width - 2, text_width(notice) + 1)))
+        if self.fields:
+            return self.prompt_fields()
         inp = self.term.inkey()
         self.notice = None
         return inp
+
+    def prompt_fields(self):
+        """
+        Return the answer to a prompt, typed at a 3270 terminal.
+
+        That is the first letter typed as a command, Return when none, or
+        Escape by PF3.  What was typed in the text meanwhile is kept.
+        """
+        while True:
+            event, data = self.session.read_events(('refresh', 'tn3270'))
+            if event == 'refresh':
+                self.layout()
+                self.render(full=True)
+                continue
+            self.apply_fields(data)
+            self.notice = None
+            if data['aid'] in ('pf3', 'pf12'):
+                return u'\x1b'
+            return data['text'].strip()[:1] or u'\r'
+
+    def apply_fields(self, data):
+        """
+        Apply what was typed in the rows of text, at a 3270 terminal.
+
+        ``data`` is the event of an attention key, of x84.tn3270: rows of
+        text typed over, by row of the screen, and the cursor.
+        """
+        height = self.text_height
+        changes = dict((self.top + yloc - 1, text)
+                       for yloc, text in data['fields'].items()
+                       if 1 <= yloc <= height)
+        if changes and not self.buf.replace_rows(changes):
+            echo(u'\a')
+        if data['cursor'] and 1 <= data['cursor'][0] <= height:
+            self.buf.locate(self.top + data['cursor'][0] - 1,
+                            data['cursor'][1])
+
+    def handle_fields(self, data):
+        """
+        Process an attention key of a 3270 terminal.
+
+        Returns ``(True, value)`` when the editor exits with ``value``.
+        """
+        buf = self.buf
+        self.apply_fields(data)
+        command = data['text'].strip()
+        if command:
+            if command[:1].upper() not in u'SAUQH':
+                self.notice = u'Commands: Save, Abort, Undo, Quote, Help'
+                return None
+            return self.menu(command[:1])
+        if data['aid'] == 'enter':
+            # a line is added when typing has reached the end of one.
+            if data['cursor'] and buf.pos == len(buf.paragraphs[buf.para]):
+                if not buf.newline():
+                    echo(u'\a')
+        elif data['aid'] in ('pf3', 'pf12'):
+            # END and CANCEL, as ISPF names them.
+            return self.menu()
+        elif data['aid'] == 'pf1':
+            return self.command(KEY_HELP)
+        elif data['aid'] == 'pf7':
+            buf.up(self.text_height - 1)
+        elif data['aid'] == 'pf8':
+            buf.down(self.text_height - 1)
+        return None
 
     # drafts
 
@@ -383,8 +490,9 @@ class Editor(object):
             choices.append((u'Q', u'uote', KEY_QUOTE))
         choices.append((u'H', u'elp', KEY_HELP))
         if not inp:
-            inp = self.prompt(u'Menu: {0}  (Esc returns)'.format(u'  '.join(
-                u'{0}){1}'.format(key, rest) for key, rest, _ in choices)))
+            inp = self.prompt(u'Menu: {0}  ({1} returns)'.format(u'  '.join(
+                u'{0}){1}'.format(key, rest) for key, rest, _ in choices),
+                u'PF3' if self.fields else u'Esc'))
         if len(inp) == 1 and inp < u' ' and not is_escape(self.term, inp):
             # control keys of commands, such as ^Z, work here as well.
             return self.command(str(inp))
@@ -414,9 +522,11 @@ class Editor(object):
                     return None
             return True, False
         elif inp == KEY_HELP:
+            self.leave_fields()
             self.show_help()
             self.render(full=True)
         elif inp == KEY_QUOTE and self.quote:
+            self.leave_fields()
             self.quote_window()
             self.render(full=True)
         elif inp == KEY_CUT:
@@ -488,14 +598,24 @@ class Editor(object):
 
     def run(self):
         """ Edit until saved or aborted, return result. """
+        result = self.edit()
+        self.leave_fields()
+        return result
+
+    def edit(self):
+        """ Edit until saved or aborted, see :meth:`run`. """
         self.render(full=True)
         while True:
             event, data = self.session.read_events(
-                ('refresh', 'input'), self.autosave_timeout())
+                ('refresh', 'input', 'tn3270'), self.autosave_timeout())
             if event == 'refresh':
                 self.layout()
                 self.render(full=True)
                 continue
+            if event == 'tn3270':
+                result = self.handle_fields(data)
+                if result is not None:
+                    return result[1]
             if event == 'input':
                 self.session.buffer_input(data, pushback=True)
                 # process all keys received, such as pasted text, before
