@@ -74,6 +74,11 @@ def get_keyset(term):
     }
 
 
+def is_movement(inp, keyset, mapping):
+    """ Whether ``inp`` is the movement ``mapping`` of ``keyset``. """
+    return inp.code in keyset[mapping] or inp in keyset[mapping]
+
+
 def do_movement(inp, scroll_idx, height, bottom, keyset):
     """ Return new scroll_idx if ``inp`` is a matching movement. """
 
@@ -109,8 +114,7 @@ def do_movement(inp, scroll_idx, height, bottom, keyset):
 
     # evaluate and return modified scroll_idx for any matching keyset.
     for direction in directions:
-        if (inp.code in keyset[direction.mapping] or
-                inp in keyset[direction.mapping]):
+        if is_movement(inp, keyset, direction.mapping):
             return direction.clamp(scroll_idx + direction.modifier)
     return scroll_idx
 
@@ -184,10 +188,50 @@ def get_article_summaries(term, articles):
     return results
 
 
+def summary_padding(term):
+    """ Return rows of each article summary's padding, plus one. """
+    # larger terminals get an extra space between summaries
+    return 2 if term.height > 25 else 1
+
+
+def wrap_summary(term, line):
+    """ Return article summary ``line``, wrapped to terminal width. """
+    # calculate indentation (after first ' ').
+    _subsq_indent = ((term.strip_seqs(line[:30]).find(' ') or -1) + 1)
+    return term.wrap(line, subsequent_indent=u' ' * _subsq_indent)
+
+
+def count_summaries(term, start, height, articles):
+    """ Return number of articles from ``start`` displayed in full. """
+    _vpadd = summary_padding(term)
+    count, line_no = 0, 0
+    for line in articles[start:]:
+        line_no += len(wrap_summary(term, line))
+        if line_no > height:
+            break
+        count += 1
+        line_no += _vpadd - 1
+    return count
+
+
+def page_down_summaries(term, scroll_idx, height, articles):
+    """ Return scroll index of the article following those in view. """
+    return scroll_idx + max(1, count_summaries(
+        term, scroll_idx, height, articles))
+
+
+def page_up_summaries(term, scroll_idx, height, articles):
+    """ Return scroll index of the page ending before ``scroll_idx``. """
+    start = scroll_idx - 1
+    while start > 0 and count_summaries(
+            term, start - 1, height, articles) >= scroll_idx - start + 1:
+        start -= 1
+    return max(0, min(start, scroll_idx))
+
+
 def render_articles_summary(term, scroll_idx, height, articles):
     """ Render and return articles summary in-view. """
-    # _vpadd: larger terminals get an extra space between summaries
-    _vpadd = 2 if term.height > 25 else 1
+    _vpadd = summary_padding(term)
     _endline = term.clear_eol + u'\r\n'
 
     line_no = 0
@@ -196,11 +240,8 @@ def render_articles_summary(term, scroll_idx, height, articles):
     output = u''
     _start, _end = scroll_idx, (scroll_idx + (height // _vpadd))
     for line in articles[_start:_end]:
-        # calculate indentation (after first ' ').
-        _subsq_indent = ((term.strip_seqs(line[:30]).find(' ') or -1) + 1)
-
         # render each line, wrapping to terminal width
-        for subline in term.wrap(line, subsequent_indent=u' ' * _subsq_indent):
+        for subline in wrap_summary(term, line):
             if line_no < height:
                 output = u''.join((output, subline, _endline))
                 line_no += 1
@@ -390,11 +431,11 @@ def view_article_summaries(session, term, rss_url, rss_title):
                     width -= 1
                 last_width, last_height = term.width, term.height
 
-                # we can't actually determine how many articles may be
-                # displayed until render_articles_summary is called; we
-                # just shortcut and say "the last 3 is the end".
+                # the last page is the one that ends with the last article.
                 article_summary = get_article_summaries(term, articles)
-                bottom = len(article_summary) - 3
+                bottom = page_up_summaries(term, len(article_summary),
+                                           page_height, article_summary)
+                scroll_idx = min(scroll_idx, bottom)
 
             # display titlebar
             echo(term.home)
@@ -451,9 +492,17 @@ def view_article_summaries(session, term, rss_url, rss_title):
                         dirty = 1
                     break
                 else:
-                    _idx = do_movement(inp=inp, scroll_idx=scroll_idx,
-                                       height=page_height, bottom=bottom,
-                                       keyset=keyset)
+                    # pages are of articles, not of rows.
+                    if is_movement(inp, keyset, 'pgdown'):
+                        _idx = min(bottom, page_down_summaries(
+                            term, scroll_idx, page_height, article_summary))
+                    elif is_movement(inp, keyset, 'pgup'):
+                        _idx = page_up_summaries(
+                            term, scroll_idx, page_height, article_summary)
+                    else:
+                        _idx = do_movement(inp=inp, scroll_idx=scroll_idx,
+                                           height=page_height, bottom=bottom,
+                                           keyset=keyset)
                     if scroll_idx != _idx:
                         scroll_idx = _idx
                         dirty = 2

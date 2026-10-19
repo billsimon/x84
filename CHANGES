@@ -77,6 +77,8 @@
     disabled.
   - bugfix: the default logging configuration failed when its folder was not
     ~/.x84.
+  - bugfix: paging down the hackernews article list skipped articles, moving
+    by rows rather than by the articles displayed.
 
 2.0.15
   - bugfix: upgraded six version to 1.9.0 to meet blessed requirements
