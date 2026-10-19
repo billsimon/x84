@@ -686,6 +686,11 @@ def test_alarm(pair):
     client.repaint_pending = True
     draw(client, sock, display)
     assert not display.alarm
+    # not of BEL ending a sequence, as of the title, a menu's activity.
+    client.send_unicode(u'\x1b]2;reading hackernews\x07menu')
+    time.sleep(client.RENDER_IDLE)
+    draw(client, sock, display)
+    assert not display.alarm
     client.send_unicode(u'\a')
     time.sleep(client.RENDER_IDLE)
     draw(client, sock, display)

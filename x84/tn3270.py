@@ -729,11 +729,18 @@ class VirtualScreen(pyte.Screen):
             queries of the bbs, such as of the cursor position.
         """
         self._reply = reply
+        #: whether the bell rang, of BEL, but not of BEL ending a sequence,
+        #: such as of the title.
+        self.rang = False
         pyte.Screen.__init__(self, columns, lines)
 
     def write_process_input(self, data):
         """ Answer a query of the bbs. """
         self._reply(data)
+
+    def bell(self, *args):
+        """ Ring the bell. """
+        self.rang = True
 
 
 class TN3270Client(BaseClient):
@@ -1040,8 +1047,6 @@ class TN3270Client(BaseClient):
                 len(ucs) - begin < 64):
             # the rest of a declaration follows, with more output.
             ucs, self._partial = ucs[:begin], ucs[begin:]
-        if u'\a' in ucs:
-            self.alarm = True
         pos = 0
         for match in RE_CONTROL.finditer(ucs):
             self.feed(ucs[pos:match.start()])
@@ -1051,6 +1056,8 @@ class TN3270Client(BaseClient):
                 self.report_mode(match.group(2))
             pos = match.end()
         self.feed(ucs[pos:])
+        if self.screen.rang:
+            self.alarm, self.screen.rang = True, False
         now = time.time()
         self.output_time = now
         if self.dirty_time is None:
