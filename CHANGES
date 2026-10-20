@@ -24,6 +24,16 @@
     postal code worldwide.
   - enhancement: irc chat connects to irc.libera.chat with verified TLS by
     default, with a new 'ssl_verify' option of section [irc].
+  - enhancement: irc chat is rewritten.  Its screen keeps its shape: text
+    received is displayed only as text, its formatting translated (and
+    escape sequences discarded), measured as the terminal displays it,
+    cp437 or utf-8.  Private messages and notices are displayed; commands
+    /msg, /nick, /join, /part, /whois, /away and /clear are added; PgUp and
+    PgDn scroll back.  A nick in use is followed by '_' or a digit, rather
+    than prompting.  Connecting may be canceled, and times out (option
+    'connect_timeout'); SASL login by options 'sasl_user' and
+    'sasl_password'.  Events of no reason, such as a QUIT, no longer end
+    the chat.
   - enhancement: dial-in modem callers, answered by datamodem, connect by
     the new x84-modem-bridge command to a modem server (section [modem]),
     with their connect rate and caller ID in the session environment, and
