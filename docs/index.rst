@@ -13,6 +13,7 @@ Contents:
    intro
    project_details
    msgnet
+   mrc
    doors
    modem
    tn3270
