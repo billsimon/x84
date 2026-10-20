@@ -3,6 +3,7 @@
 
 # std imports
 import importlib.machinery
+import contextlib
 import importlib.util
 import collections
 import traceback
@@ -138,6 +139,7 @@ class Session(object):
         self._last_input_time = time.time()
         self._node = None
         self._script_module = []
+        self._timeout_holds = 0
 
         # create event buffer
         self._buffer = dict()
@@ -592,6 +594,8 @@ class Session(object):
 
         - ``lock-<name>``: Fine-grained global bbs locking.
 
+        - ``hold-timeout``: Hold the idle timeout (True), or release it.
+
         :param str event: event name.
         :param data: event data.
         :raises Disconnected: the engine has closed the IPC pipe.
@@ -744,13 +748,38 @@ class Session(object):
         # capture the return value of the script and return
         # to the caller -- so value = gosub('my_game') can retrieve
         # the return value of its main() function.
-        value = module.main(*script.args, **script.kwargs)
+        # a script declaring IDLE_TIMEOUT = False, as the chats do, holds
+        # the engine's idle timeout while it runs: its users read others'
+        # messages without typing.
+        with self._timeout_held(not getattr(module, 'IDLE_TIMEOUT', True)):
+            value = module.main(*script.args, **script.kwargs)
 
         # remove the current script from the script stack, since it has
         # finished executing.
         self._script_stack.pop()
 
         return value
+
+    @contextlib.contextmanager
+    def _timeout_held(self, held):
+        """
+        Hold the engine's idle timeout of this session, when ``held``.
+
+        Scripts may nest, such as by gosub: the timeout is held by the first
+        and released by the last to return.
+        """
+        if not held:
+            yield
+            return
+        self._timeout_holds += 1
+        if self._timeout_holds == 1:
+            self.send_event('hold-timeout', True)
+        try:
+            yield
+        finally:
+            self._timeout_holds -= 1
+            if self._timeout_holds == 0:
+                self.send_event('hold-timeout', False)
 
     @staticmethod
     def _load_script(script_name, lookup_paths):

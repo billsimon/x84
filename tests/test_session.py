@@ -193,3 +193,109 @@ def test_terminal_of_unknown_type_of_known_family(monkeypatch):
     assert family_kind('screen-color', 'ansi') == 'screen'
     assert family_kind('xterm', 'ansi') == 'ansi'
     assert family_kind('no-such-terminal', 'ansi') == 'ansi'
+
+
+def test_chat_script_holds_idle_timeout(session, tmp_path):
+    """ A script of IDLE_TIMEOUT = False holds the engine's idle timeout. """
+    import types
+    from x84.bbs.script_def import Script
+    (tmp_path / 'chatty.py').write_text(
+        'import x84.bbs.session\n'
+        'from x84.bbs.script_def import Script\n'
+        'IDLE_TIMEOUT = False\n'
+        'def main(depth=0, fail=False):\n'
+        '    run = x84.bbs.session.getsession().runscript\n'
+        '    if depth:\n'
+        '        run(Script("chatty", (depth - 1,), {}))\n'
+        '        run(Script("plain", (), {}))\n'
+        '    if fail:\n'
+        '        raise ValueError("chat failed")\n'
+        '    return depth\n')
+    (tmp_path / 'plain.py').write_text('def main():\n    return None\n')
+    sess = session.session
+    sess._script_module = [types.SimpleNamespace(__path__=[str(tmp_path)])]
+
+    def events():
+        result = []
+        while session.master_read.poll():
+            event, data = session.master_read.recv()
+            if event == 'hold-timeout':
+                result.append(data)
+        return result
+
+    # held by the outermost of nested chat scripts, only.
+    assert sess.runscript(Script('chatty', (2,), {})) == 2
+    assert events() == [True, False]
+    assert sess.runscript(Script('plain', (), {})) is None
+    assert events() == []
+    # and released when the script fails.
+    with pytest.raises(ValueError):
+        sess.runscript(Script('chatty', (), {'fail': True}))
+    assert events() == [True, False]
+
+
+def test_engine_holds_idle_timeout(cfg, monkeypatch):
+    """ No session times out while held; idle time counts from release. """
+    import logging
+    import multiprocessing
+    import types
+    import x84.engine
+    import x84.terminal
+    from x84.terminal import TerminalProcess
+
+    class Client(object):
+        events, send_buffer, SEND_HIGH_WATER = [], b'', 4096
+        last_input = 0
+
+        def input_ready(self):
+            return False
+
+        def idle(self):
+            return now[0] - self.last_input
+
+    now = [1000.0]
+    monkeypatch.setattr(x84.terminal, 'time',
+                        types.SimpleNamespace(time=lambda: now[0]))
+    killed = []
+    monkeypatch.setattr(x84.engine, 'kill_session',
+                        lambda client, reason: killed.append(reason))
+    master_read, child_write = multiprocessing.Pipe(duplex=False)
+    child_read, master_write = multiprocessing.Pipe(duplex=False)
+    cfg.set('system', 'timeout', '60')
+    tty = TerminalProcess(Client(), 'test-sid', (master_write, master_read))
+    terminals = [('test-sid', tty)]
+
+    now[0] = 59.0
+    x84.engine.session_send(terminals)
+    assert killed == []
+    now[0] = 61.0
+    x84.engine.session_send(terminals)
+    assert killed == ['timeout']
+
+    # the chat script holds the timeout, by the event of its session.
+    del killed[:]
+    child_write.send(('hold-timeout', True))
+    x84.engine.session_recv(terminals, logging.getLogger('test'), False)
+    assert tty.timeout_held
+    now[0] = 7200.0
+    x84.engine.session_send(terminals)
+    assert killed == []
+
+    # once released, the user idle in chat is given the timeout anew.
+    child_write.send(('hold-timeout', False))
+    x84.engine.session_recv(terminals, logging.getLogger('test'), False)
+    assert not tty.timeout_held
+    now[0] = 7259.0
+    x84.engine.session_send(terminals)
+    assert killed == []
+    now[0] = 7261.0
+    x84.engine.session_send(terminals)
+    assert killed == ['timeout']
+    for conn in (master_read, child_write, child_read, master_write):
+        conn.close()
+
+
+def test_chats_hold_idle_timeout(script):
+    """ Users of irc and mrc chat are not disconnected for idling. """
+    assert script('ircchat').IDLE_TIMEOUT is False
+    assert script('mrcchat').IDLE_TIMEOUT is False

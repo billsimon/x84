@@ -1,6 +1,7 @@
 """ Terminal handler for x/84 """
 import contextlib
 import threading
+import time
 import logging
 import codecs
 import sys
@@ -303,6 +304,23 @@ class TerminalProcess(object):
         (master_write, self.master_read) = master_pipes
         self.master_write = LockedConnection(master_write)
         self.timeout = get_ini('system', 'timeout', getter='getint') or 0
+        self.timeout_held = False
+        self._released = 0
+
+    def hold_timeout(self, held):
+        """ Hold the idle timeout, or release it, counting idle time anew. """
+        if self.timeout_held and not held:
+            self._released = time.time()
+        self.timeout_held = held
+
+    def idle(self):
+        """ Time elapsed since input, or since the timeout was released. """
+        return min(self.client.idle(), time.time() - self._released)
+
+    def timed_out(self):
+        """ Whether the session has been idle longer than its timeout. """
+        return bool(self.timeout and not self.timeout_held
+                    and self.idle() > self.timeout)
 
 
 def flush_queue(queue):

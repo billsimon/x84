@@ -37,6 +37,10 @@
   - enhancement: multi relay chat (MRC), a chat of BBSes: the engine keeps
     the bbs's one connection to the MRC server, of section [mrc], shared
     by its users in the new script mrcchat ('mrc' of the main menu).
+  - enhancement: users of irc and mrc chat are not disconnected by the idle
+    timeout, as they read others' messages without typing; idle time counts
+    anew when they leave.  Any script may declare IDLE_TIMEOUT = False to
+    the same effect.
   - enhancement: dial-in modem callers, answered by datamodem, connect by
     the new x84-modem-bridge command to a modem server (section [modem]),
     with their connect rate and caller ID in the session environment, and
