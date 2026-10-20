@@ -15,6 +15,7 @@ Contents:
    msgnet
    doors
    modem
+   tn3270
    web
    developers
    default_api

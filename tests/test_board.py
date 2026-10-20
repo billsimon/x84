@@ -268,3 +268,42 @@ def test_subscription_of_another_user(users, engine, script, session):
     from x84.bbs.userbase import get_user
     assert get_user(u'doc')['msg_subscription'] == [u'*']
     assert session.session.user.get('msg_subscription') is None
+
+
+def test_clicks_of_3270(users, engine, script, session):
+    # at a 3270, ENTER is a click of the mouse where the cursor is: a
+    # message clicked is read, and hints of the bars are their keys.
+    session.session.kind = 'tn3270'
+    # as answered by the tn3270 server, to queries of mouse modes, which
+    # are supported and not enabled (see test_integration.py).
+    session.session.terminal._dec_mode_cache.update({1000: 2, 1006: 2})
+    post(u'biff', u'first', body=u'first body')
+    post(u'doc', u'second', body=u'second body')
+    hints = u' Enter Read P Post R Reply C Tags V By date M Mark read'
+    quit_x = len(hints + u' Tab New ') + 2
+
+    def click(row, col):
+        return u'\x1b[<0;{0};{1}M\x1b[<0;{0};{1}m'.format(col + 1, row + 1)
+    keys = [click(3, 10), PAUSE, u'q', PAUSE, click(23, quit_x)]
+    output = run_script(engine, script('board'), keys)
+    assert u'\x1b[?1006;1000h' in output.replace(u'\x1b[?1000;1006h',
+                                                 u'\x1b[?1006;1000h')
+    assert u'first body' in output
+    assert u'second body' not in output
+
+
+def test_page_of_3270(users, engine, script, session):
+    # at a 3270, the title bar names the PF keys that page, and they are
+    # pressed by clicking them, too: a page scrolls by a page.
+    session.session.kind = 'tn3270'
+    session.session.terminal._dec_mode_cache.update({1000: 2, 1006: 2})
+    for num in range(30):
+        post(u'biff', u'subject {0}'.format(num))
+    title = u' Board: all messages, 30 new'
+    right = u'PF7 Up PF8 Down Tab New '
+    pf8_x = 79 - len(right) + right.index(u'PF8')
+    click = u'\x1b[<0;{0};1M\x1b[<0;{0};1m'.format(pf8_x + 1)
+    output = run_script(engine, script('board'), [click, PAUSE, u'q'])
+    assert title in output and right in output
+    # 21 rows of the list, at 24 rows: the 22nd message is selected.
+    assert u'22/30' in output

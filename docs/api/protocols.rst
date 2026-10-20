@@ -49,6 +49,13 @@ Protocols
 .. automodule:: x84.modem_bridge
    :members:
 
+``x84.tn3270``
+--------------
+
+.. automodule:: x84.tn3270
+   :members:
+   :show-inheritance:
+
 ``x84.sftp``
 ------------
 

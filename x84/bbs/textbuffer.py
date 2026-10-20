@@ -217,6 +217,78 @@ class TextBuffer(object):
             pos += 1
         self.para, self.pos = para, pos
 
+    def locate(self, row, col):
+        """ Move cursor to cell (row, col) of displayed rows, or nearest. """
+        self._locate(row, col)
+        self._moved()
+
+    def replace_rows(self, changes):
+        """
+        Replace the text of displayed rows, as typed over them at once.
+
+        A 3270 terminal sends the rows that were changed, by attention key.
+        Each row's text replaces its part of its paragraph, which is wrapped
+        again.  A paragraph whose rows are all made empty is removed.  Rows
+        past the end of the document are added as paragraphs: one row
+        continues the paragraph of the row above it when that row, or the
+        last of the document, was typed to its end, as a 3270 continues
+        typing on the next row.
+
+        :param dict changes: text by index of displayed row, as of
+            :meth:`rows`.
+        :returns: whether the document was changed; it is not when it would
+            exceed :attr:`max_length`.
+        """
+        rows = self.rows()
+        paragraphs = list(self.paragraphs)
+        replaced = {}
+        # last row first, so that the offsets of rows before it are kept.
+        for idx in sorted((idx for idx in changes if idx < len(rows)),
+                          reverse=True):
+            para, begin, end = rows[idx]
+            old, new = paragraphs[para][begin:end], changes[idx].rstrip(u' ')
+            if idx + 1 < len(rows) and rows[idx + 1][0] == para and new:
+                # the spaces that end a wrapped row separate it from the
+                # next, though not displayed by a 3270.
+                new += old[len(old.rstrip(u' ')):] or u''
+            paragraphs[para] = paragraphs[para][:begin] + new + (
+                paragraphs[para][end:])
+            replaced.setdefault(para, set()).add(idx)
+        for para in sorted(replaced, reverse=True):
+            para_rows = set(idx for idx, row in enumerate(rows)
+                            if row[0] == para)
+            if (para_rows <= replaced[para] and not paragraphs[para].strip()
+                    and len(paragraphs) > 1):
+                del paragraphs[para]
+        added, prior = [], len(rows) - 1
+        full = text_width(changes.get(prior, u'')) >= self.width
+        for idx in sorted(idx for idx in changes if idx >= len(rows)):
+            text = changes[idx]
+            if idx == prior + 1 and full:
+                if added:
+                    added[-1] += text
+                else:
+                    paragraphs[-1] += text
+            else:
+                added.extend([u''] * (idx - prior - 1))
+                added.append(text)
+            prior, full = idx, text_width(text) >= self.width
+        added = [para.rstrip(u' ') for para in added]
+        while added and not added[-1]:
+            added.pop()
+        paragraphs.extend(added)
+        if paragraphs == self.paragraphs:
+            return False
+        if sum(len(para) for para in paragraphs) + len(
+                paragraphs) - 1 > self.max_length:
+            return False
+        self._checkpoint()
+        self.paragraphs = paragraphs
+        self.para = min(self.para, len(paragraphs) - 1)
+        self.pos = min(self.pos, len(paragraphs[self.para]))
+        self._end_group()
+        return True
+
     # undo
 
     def _checkpoint(self, group=None):

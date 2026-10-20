@@ -15,9 +15,13 @@ from x84.bbs import (
     ini,
 )
 from common import (
+    locate_menu_entries,
     render_menu_entries,
+    clicked_entry,
     display_banner,
     display_prompt,
+    menu_clicks,
+    is_mouse,
 )
 
 #: MenuItem is a definition class for display, input, and target script.
@@ -214,6 +218,7 @@ def main():
         colors['backlight'] = getattr(term, color_backlight)
         colors['highlight'] = getattr(term, color_highlight)
         colors['lowlight'] = getattr(term, color_lowlight)
+    entries = []
 
     while True:
         if dirty == 2:
@@ -228,33 +233,41 @@ def main():
                 width, height = term.width, term.height
                 text = render_menu_entries(
                     term, top_margin, menu_items, colors)
+            # where menu items are, to be chosen by the mouse (at a 3270).
+            entries = locate_menu_entries(
+                term, top_margin, menu_items, colors)
             echo(u''.join((text,
                            display_prompt(term, colors),
                            editor.refresh())))
             dirty = 0
 
-        event, data = session.read_events(('input', 'refresh'))
-
-        if event == 'refresh':
-            dirty = True
-            continue
-
-        elif event == 'input':
-            session.buffer_input(data, pushback=True)
-
-            # we must loop over inkey(0), we received a 'data'
-            # event, though there may be many keystrokes awaiting for our
-            # decoding -- or none at all (multibyte sequence not yet complete).
+        chosen = None
+        with menu_clicks(term):
+            # keystrokes may remain of earlier input, typed ahead of the
+            # script last chosen: those are read first.
             inp = term.inkey(0)
-            while inp:
-                if inp.code == term.KEY_ENTER:
+            if not inp:
+                event, data = session.read_events(('input', 'refresh'))
+
+                if event == 'refresh':
+                    dirty = True
+                    continue
+
+                # we must loop over inkey(0), we received a 'data' event,
+                # though there may be many keystrokes awaiting for our
+                # decoding -- or none at all (multibyte sequence not yet
+                # complete).
+                session.buffer_input(data, pushback=True)
+                inp = term.inkey(0)
+            while inp and chosen is None:
+                if is_mouse(inp):
+                    # a menu item clicked is chosen.
+                    chosen = clicked_entry(entries, inp)
+                elif inp.code == term.KEY_ENTER:
                     # find matching menu item,
                     for item in menu_items:
                         if item.inp_key == editor.content.strip():
-                            echo(term.normal + u'\r\n')
-                            gosub(item.script, *item.args, **item.kwargs)
-                            editor.content = u''
-                            dirty = 2
+                            chosen = item
                             break
                     else:
                         if editor.content:
@@ -267,4 +280,11 @@ def main():
                             echo(editor.refresh())
                 else:
                     echo(editor.process_keystroke(inp))
-                inp = term.inkey(0)
+                if chosen is None:
+                    inp = term.inkey(0)
+
+        if chosen is not None:
+            echo(term.normal + u'\r\n')
+            gosub(chosen.script, *chosen.args, **chosen.kwargs)
+            editor.content = u''
+            dirty = 2

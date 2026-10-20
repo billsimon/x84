@@ -7,6 +7,7 @@ a temporary configuration and database.
 # std imports
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -79,7 +80,8 @@ def server(tmp_path_factory, request):
             return sock.getsockname()[1]
 
     root = tmp_path_factory.mktemp('x84')
-    ports = {'telnet': free_port(), 'ssh': free_port(), 'modem': free_port()}
+    ports = {'telnet': free_port(), 'ssh': free_port(), 'modem': free_port(),
+             'tn3270': free_port()}
     cfg = x84.bbs.ini.init_bbs_ini()
     cfg.set('system', 'datapath', str(root / 'data'))
     cfg.set('system', 'password_digest', 'internal')
@@ -91,6 +93,8 @@ def server(tmp_path_factory, request):
     cfg.set('modem', 'enabled', 'yes')
     cfg.set('modem', 'port', str(ports['modem']))
     cfg.set('modem', 'secret', 'modem-secret')
+    cfg.set('tn3270', 'enabled', 'yes')
+    cfg.set('tn3270', 'port', str(ports['tn3270']))
     with open(root / 'default.ini', 'w') as fout:
         cfg.write(fout)
     log = x84.bbs.ini.init_log_ini(log_folder=str(root))
@@ -109,7 +113,7 @@ def server(tmp_path_factory, request):
         return (root / 'output.log').read_text()
 
     stime = time.time()
-    while 'modem listening' not in server_log():
+    while 'tn3270 listening' not in server_log():
         assert proc.poll() is None, server_log()
         assert time.time() - stime < 60, server_log()
         time.sleep(0.2)
@@ -372,6 +376,134 @@ def test_private_mail(server):
     screen.expect(r'logoff system')
     assert u'Traceback' not in server['log']()
     screen.close()
+
+
+class S3270(object):
+
+    """ A 3270 terminal, by s3270 of the x3270 family. """
+
+    def __init__(self, port, model='3279-2-E'):
+        self.proc = subprocess.Popen(
+            ['s3270', '-model', model, '-utf8'], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, text=True)
+        self.cmd('Connect(127.0.0.1:{0})'.format(port))
+
+    def cmd(self, command):
+        """ Run s3270 ``command``, returning its lines of data. """
+        self.proc.stdin.write(command + '\n')
+        self.proc.stdin.flush()
+        data = []
+        while True:
+            line = self.proc.stdout.readline()
+            assert line, 'end of s3270 output, after {0}'.format(command)
+            line = line.rstrip('\n')
+            if line == 'ok':
+                return data
+            if line == 'error':
+                raise AssertionError('{0}: {1}'.format(command, data))
+            if line.startswith('data: '):
+                data.append(line[len('data: '):])
+
+    def type(self, text):
+        """ Type ``text``, once the keyboard is unlocked. """
+        self.cmd('Wait(10,Unlock)')
+        self.cmd('String("{0}")'.format(text))
+
+    @property
+    def text(self):
+        return u'\n'.join(self.cmd('Ascii()'))
+
+    def find(self, text):
+        """ Return (row, column) of ``text`` on screen. """
+        for row, line in enumerate(self.cmd('Ascii()')):
+            if text in line:
+                return row, line.index(text)
+        raise AssertionError('{0!r} not on screen:\n{1}'.format(
+            text, self.text))
+
+    def enter_at(self, row, col):
+        """ Move the cursor to (row, col), and press ENTER. """
+        self.cmd('Wait(10,Unlock)')
+        self.cmd('MoveCursor({0},{1})'.format(row, col))
+        self.cmd('Enter')
+
+    def expect(self, pattern, timeout=20):
+        stime = time.time()
+        while time.time() - stime < timeout:
+            if re.search(pattern, self.text):
+                return
+            time.sleep(0.2)
+        raise AssertionError('{0!r} not on screen:\n{1}'.format(
+            pattern, self.text))
+
+    def close(self):
+        self.proc.stdin.write('Quit\n')
+        self.proc.stdin.flush()
+        self.proc.wait(timeout=10)
+
+
+@pytest.mark.skipif(not shutil.which('s3270'),
+                    reason='s3270, of the x3270 family, is not installed')
+def test_tn3270_login(server):
+    """ A 3270 terminal logs in, posts a message, and reads it. """
+    signup(server['telnet'], u'ibm', u'pass1234').close()
+    term = S3270(server['tn3270'])
+    term.expect(r'PRESS ENTER TO LOG ON')
+    term.cmd('Enter')
+    term.expect(r'Login:')
+    term.type(u'ibm')
+    term.cmd('Enter')
+    term.expect(r'Password')
+    term.type(u'pass1234')
+    # the password is not displayed, as it is typed.
+    assert u'pass1234' not in term.text
+    term.cmd('Enter')
+    term.expect(r'quick login', timeout=30)
+    term.type(u'y')
+    term.cmd('Enter')
+    term.expect(r'logoff system', timeout=30)
+
+    # the message area is chosen by the cursor, on its menu item; and a
+    # post, typing in the editor's window.
+    term.enter_at(*term.find(u'[msg] message area'))
+    term.expect(r'subscription tags')
+    term.cmd('Enter')
+    term.expect(r'ost public')
+    term.type(u'p')
+    term.cmd('Enter')
+    term.expect(r'To:')
+    term.cmd('Enter')
+    term.expect(r'Subject:')
+    term.type(u'from a 3270')
+    term.cmd('Enter')
+    term.expect(r'PF3 Menu')
+    term.type(u'first line')
+    term.cmd('Enter')
+    term.type(u'second line')
+    term.cmd('PF(3)')
+    term.expect(r'Menu: S\)ave')
+    term.type(u's')
+    term.cmd('Enter')
+    term.expect(r'Tags of your message')
+    term.cmd('Enter')
+    term.expect(r'Posted')
+
+    # read it, by the cursor; Q returns to the list, without a return key
+    # that would read it again.
+    term.enter_at(2, 20)
+    term.expect(r'second line')
+    assert u'first line' in term.text
+    term.type(u'q')
+    term.cmd('Enter')
+    term.expect(r'Q Quit')
+    time.sleep(1)
+    assert u'second line' not in term.text
+    # quit, by the cursor on the key of the status bar.
+    term.enter_at(*term.find(u'Q Quit'))
+    term.expect(r'ost public')
+    assert u'tn3270-127.0.0.1:' in server['log']()
+    assert u'Traceback' not in server['log']()
+    term.close()
 
 
 def test_sigterm_shutdown(server):

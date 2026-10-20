@@ -54,8 +54,13 @@ web = [
     "cheroot>=10.0",
     "web.py>=0.62",
 ]
+# tn3270 server, for 3270 terminals.
+tn3270 = [
+    "pyte>=0.8",
+]
 test = [
     "pytest>=8",
+    "pyte>=0.8",
     "cheroot>=10.0",
     "web.py>=0.62",
 ]

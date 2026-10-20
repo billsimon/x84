@@ -209,3 +209,44 @@ def test_escape_combined_with_control_key(session, editor):
     # escape followed quickly by ^Z saves.
     result, _ = run_editor(session, editor, [u'text', u'\x1b\x1a'])
     assert result == u'text'
+
+
+def run_fields(session, editor, events, **kwargs):
+    """ Run the editor of a 3270 terminal, given ``events`` of its keys. """
+    session.session.kind = 'tn3270'
+    sender = threading.Thread(target=lambda: [
+        session.send('tn3270', dict(dict(text=u'', fields={}, cursor=None),
+                                    **event)) for event in events])
+    sender.start()
+    try:
+        return run_editor(session, editor, [], **kwargs)
+    finally:
+        sender.join()
+
+
+def test_fields_of_3270(session, editor):
+    # rows of text typed over at a 3270, and the menu by PF3.
+    events = [
+        dict(aid='enter', fields={1: u'hello'}, cursor=(1, 5)),
+        dict(aid='pf3', fields={2: u'world'}, cursor=(2, 5)),
+        dict(aid='enter', text=u's'),
+    ]
+    result, output = run_fields(session, editor, events)
+    assert result == u'hello\r\nworld'
+    # rows 1-22 are input fields, until the editor exits.
+    assert output.index(u'\x1b]3270;fields;1;22\x07') < output.index(
+        u'\x1b]3270;fields\x07')
+    assert u'PF3 Menu' in output
+
+
+def test_fields_of_3270_commands(session, editor):
+    # ENTER amid a line does not divide it; commands may be typed.
+    events = [
+        dict(aid='enter', fields={1: u'hello world'}, cursor=(1, 3)),
+        dict(aid='enter', text=u'x'),
+        dict(aid='pf1', text=u'save'),
+    ]
+    result, output = run_fields(session, editor, events,
+                                continue_draft=u'draft')
+    assert result == u'hello world'
+    assert u'Commands: Save, Abort' in output

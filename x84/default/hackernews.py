@@ -9,9 +9,11 @@ import collections
 import textwrap
 import math
 import sys
+import re
 
 # local
 from x84.bbs import getsession, getterminal, echo, LineEditor, get_ini
+from common import clicked_entry, is_mouse, menu_clicks
 
 # 3rd-party
 import feedparser
@@ -58,6 +60,9 @@ KEYSET = {
     'pgdown': ['KEY_PGDOWN', u'f', u' '],
     'end': ['KEY_END', u'G'],
 }
+
+#: commands of context help, such as ``[q]uit``, clicked at a 3270.
+RE_COMMAND = re.compile(r'\[(\w)\]\w*')
 
 MSG_NOTEXT = ("I'm sorry, the page you requested cannot be displayed in "
               "textmode.  It's probably not worth *reading*, anyway ...")
@@ -119,8 +124,33 @@ def do_movement(inp, scroll_idx, height, bottom, keyset):
     return scroll_idx
 
 
-def get_article(term, articles):
-    """ Prompt for an article number, return matching article. """
+def locate_commands(term, text):
+    """
+    Return where the commands of context help ``text`` are displayed.
+
+    ``text`` is as displayed on the last row: its commands, such as
+    ``[q]uit``, are clicked at a 3270 terminal (see x84.tn3270).
+
+    :returns: list of ``(row, first column, last column, key)``.
+    """
+    return [(term.height - 1, match.start(), match.end(), match.group(1))
+            for match in RE_COMMAND.finditer(text)]
+
+
+def press_clicked(session, entries, inp):
+    """ Press the key of the command clicked by ``inp``, of ``entries``. """
+    key = clicked_entry(entries, inp)
+    if key is not None:
+        session.buffer_input(key.encode(session.encoding), pushback=True)
+
+
+def get_article(term, articles, entries=()):
+    """
+    Prompt for an article number, return matching article.
+
+    An article may be clicked instead, of ``entries``, as returned by
+    :func:`locate_summaries`.
+    """
     moveto_lastline = term.move(term.height, 0)
     width = term.width
     if term.kind.startswith('ansi'):
@@ -133,13 +163,23 @@ def get_article(term, articles):
         moveto_lastline,
     )))
     echo(u':: enter article #: ')
-    article_idx = LineEditor(
+    editor = LineEditor(
         width=len(str(ARTICLE_LIMIT)),
-        colors={'highlight': getattr(term, COLOR_MAIN)}
-    ).read()
-    if article_idx is None:
+        colors={'highlight': getattr(term, COLOR_MAIN)})
+    echo(editor.refresh())
+    while not (editor.quit or editor.carriage_returned):
+        inp = term.inkey()
+        if is_mouse(inp):
+            article = clicked_entry(entries, inp)
+            if isinstance(article, Article):
+                return article
+            continue
+        echo(editor.process_keystroke(inp))
+    echo(term.normal)
+    if editor.quit:
         # pressed escape
         return None
+    article_idx = editor.content
     try:
         return articles[int(article_idx) - 1]
     except (ValueError, IndexError):
@@ -229,8 +269,13 @@ def page_up_summaries(term, scroll_idx, height, articles):
     return max(0, min(start, scroll_idx))
 
 
-def render_articles_summary(term, scroll_idx, height, articles):
-    """ Render and return articles summary in-view. """
+def render_articles_summary(term, scroll_idx, height, articles, rows=None):
+    """
+    Render and return articles summary in-view.
+
+    :param dict rows: when given, filled with the index of the article
+        displayed by each row of the summary, by row.
+    """
     _vpadd = summary_padding(term)
     _endline = term.clear_eol + u'\r\n'
 
@@ -239,11 +284,13 @@ def render_articles_summary(term, scroll_idx, height, articles):
     # render all articles,
     output = u''
     _start, _end = scroll_idx, (scroll_idx + (height // _vpadd))
-    for line in articles[_start:_end]:
+    for idx, line in enumerate(articles[_start:_end], _start):
         # render each line, wrapping to terminal width
         for subline in wrap_summary(term, line):
             if line_no < height:
                 output = u''.join((output, subline, _endline))
+                if rows is not None:
+                    rows[line_no] = idx
                 line_no += 1
 
         # add additional padding between articles if room remains
@@ -258,6 +305,18 @@ def render_articles_summary(term, scroll_idx, height, articles):
     remaining = _endline * (height - line_no)
     output = u''.join((output, remaining))
     return output
+
+
+def locate_summaries(term, top, rows, articles):
+    """
+    Return where articles are displayed, of ``rows``, as filled by
+    :func:`render_articles_summary` at row ``top``: they are clicked at a
+    3270 terminal (see x84.tn3270).
+
+    :returns: list of ``(row, first column, last column, article)``.
+    """
+    return [(top + row, 0, term.width, articles[idx])
+            for row, idx in rows.items()]
 
 
 def view_article(session, term, url, title):
@@ -311,6 +370,7 @@ def view_article(session, term, url, title):
     do_quit = False
     dirty = True
     width = term.width
+    commands = []
     while not do_quit:
         if dirty:
             if last_width != term.width or last_height != term.height:
@@ -350,10 +410,10 @@ def view_article(session, term, url, title):
             if term.kind.startswith('ansi'):
                 # bah syncterm
                 moveto_lastline = term.move(term.height - 1, 0)
+            help_text = keyset_help.format(pct)[:term.width].center(width)
+            commands = locate_commands(term, help_text)
             echo(moveto_lastline)
-            echo(getattr(term, COLOR_VIEW)(
-                keyset_help.format(pct)[:term.width]
-                .center(width)))
+            echo(getattr(term, COLOR_VIEW)(help_text))
 
             dirty = False
 
@@ -368,7 +428,9 @@ def view_article(session, term, url, title):
             session.buffer_input(data, pushback=True)
             inp = term.inkey(0)
             while inp:
-                if inp == u'\x0c':
+                if is_mouse(inp):
+                    press_clicked(session, commands, inp)
+                elif inp == u'\x0c':
                     # refresh (^L)
                     dirty = 2
                 elif inp.lower() in (u'r', u'q',):
@@ -418,6 +480,7 @@ def view_article_summaries(session, term, rss_url, rss_title):
     width = term.width
     do_quit = False
     dirty = 2
+    entries, commands = [], []
     while not do_quit:
         if dirty == 2:
             # dirty value of '2' is full screen refresh,
@@ -444,19 +507,22 @@ def view_article_summaries(session, term, rss_url, rss_title):
             echo(term.move(1, 0))
 
             # display page summary of articles by scroll index
+            rows = {}
             echo(render_articles_summary(
                 term=term, scroll_idx=scroll_idx,
-                height=page_height, articles=article_summary))
+                height=page_height, articles=article_summary, rows=rows))
+            entries = locate_summaries(term, 1, rows, articles)
 
         if dirty > 0:
             # dirty value of '1' or more is context-bar refresh
             moveto_lastline = term.move(term.height, 0)
             if term.kind.startswith('ansi'):
                 moveto_lastline = term.move(term.height - 1, 0)
+            help_text = keyset_help[:term.width].center(width)
+            commands = locate_commands(term, help_text)
             echo(u''.join((
                 moveto_lastline,
-                getattr(term, COLOR_MAIN)(
-                    keyset_help[:term.width].center(width)))
+                getattr(term, COLOR_MAIN)(help_text))
             ))
             dirty = 0
 
@@ -471,14 +537,24 @@ def view_article_summaries(session, term, rss_url, rss_title):
             session.buffer_input(data, pushback=True)
             inp = term.inkey(0)
             while inp:
-                if inp == u'\x0c':
+                article = (clicked_entry(entries, inp) if is_mouse(inp)
+                           else None)
+                if article is not None:
+                    # an article clicked is viewed.
+                    view_article(session=session, term=term,
+                                 url=article.link, title=article.title)
+                    dirty = 2
+                    break
+                elif is_mouse(inp):
+                    press_clicked(session, commands, inp)
+                elif inp == u'\x0c':
                     # refresh (^L)
                     dirty = 2
                 elif inp.lower() in (u'q',):
                     do_quit = True
                     break
                 elif inp in (u'v', 'c'):
-                    article = get_article(term, articles)
+                    article = get_article(term, articles, entries)
                     if article is not None:
                         url = {u'v': article.link,
                                u'c': article.comments
@@ -523,6 +599,6 @@ def main(rss_url=None, rss_title=None):
     # create a new, empty screen
     echo(u'\r\n' * (term.height + 1))
 
-    with term.hidden_cursor():
+    with term.hidden_cursor(), menu_clicks(term):
         view_article_summaries(session=session, term=term,
                                rss_url=rss_url, rss_title=rss_title)
