@@ -43,7 +43,8 @@ and the PF keys.  ENTER continues, to the board's login.
 
 The bottom row of the 3270 is for typing, after ``Command ===>``, as of
 ISPF, and ENTER sends what was typed.  It is followed by Return when the
-board displays it, as a prompt of a line does; when the board takes it as
+board displays it, as a prompt of a line does, though a slow board may
+take some seconds; when the board takes it as
 a key instead, such as ``q`` to quit, it is not, so that no Return remains
 to be taken as another key.  ENTER alone is Return.
 

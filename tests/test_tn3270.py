@@ -520,6 +520,52 @@ def test_return_follows_a_line(pair):
     assert client.get_input() == b'\r'
 
 
+def test_return_follows_a_slow_line(pair):
+    client, sock = pair
+    client.send_unicode(u'Login: ')
+    client.repaint_pending = True
+    draw(client, sock, Display())
+    enter(client, sock, AID_ENTER, u'biff')
+    assert client.get_input() == b'biff'
+    # a slow bbs has not answered, when the keyboard is unlocked.
+    settle(client, sock)
+    assert client.get_input() == b''
+    # it displays what was typed later: the return key follows, before
+    # the terminal displays it.
+    client.send_unicode(u'biff')
+    time.sleep(client.RENDER_IDLE)
+    assert client.send_ready()
+    client.send()
+    assert client.get_input() == b'\r'
+    assert client.pending_return is None
+
+
+def test_return_of_slow_line_withheld(pair):
+    client, sock = pair
+    client.send_unicode(u'Login: ')
+    client.repaint_pending = True
+    draw(client, sock, Display())
+    enter(client, sock, AID_ENTER, u'biff')
+    settle(client, sock)
+    assert client.get_input() == b'biff'
+    # another key was pressed, before the bbs displayed what was typed.
+    enter(client, sock, AID_ENTER)
+    assert client.get_input() == b'\r'
+    client.send_unicode(u'biff')
+    settle(client, sock)
+    assert client.get_input() == b''
+    # nor does one follow, when the bbs displays it much later.
+    enter(client, sock, AID_ENTER, u'fred')
+    settle(client, sock)
+    assert client.get_input() == b'fred'
+    client.ECHO_MAX = 0
+    client.send_unicode(u'\r\nLogin: fred')
+    time.sleep(client.RENDER_IDLE)
+    client.send()
+    assert client.get_input() == b''
+    assert client.pending_return is None
+
+
 def test_return_withheld_from_a_key(pair):
     client, sock = pair
     client.send_unicode(u'Quit? ')

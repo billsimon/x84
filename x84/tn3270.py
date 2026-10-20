@@ -764,6 +764,10 @@ class TN3270Client(BaseClient):
     #: or at most this many seconds.
     ANSWER_MAX = 2.0
 
+    #: text sent without a return key is followed by one when the bbs
+    #: displays it, though later than its answer, within this many seconds.
+    ECHO_MAX = 10.0
+
     def __init__(self, sock, address_pair, on_naws=None):
         super(TN3270Client, self).__init__(sock, address_pair, on_naws)
         #: terminal type, once negotiated.
@@ -799,8 +803,9 @@ class TN3270Client(BaseClient):
         self.terminal_id = u'X84T{0:04d}'.format(next(TERMINAL_NUMBERS))
         #: time of an attention key, until the bbs has answered it.
         self.hold_time = None
-        #: (row, column, text) of text sent without a return key, which
-        #: follows only when the bbs displays it, as a prompt of a line does.
+        #: (row, column, text, time) of text sent without a return key,
+        #: which follows only when the bbs displays it, as a prompt of a line
+        #: does.
         self.pending_return = None
         self._partial = u''
 
@@ -1141,6 +1146,8 @@ class TN3270Client(BaseClient):
         if self.screen is None:
             return
         self.restore_pending = True
+        # a return key no longer follows text displayed late, of another key.
+        self.pending_return = None
         if is_help(aid) and not (self.fields and aid in AID_PF and
                                  not self.showing_help):
             # in input fields, PF1 is the help of the bbs.
@@ -1178,7 +1185,7 @@ class TN3270Client(BaseClient):
         if aid == AID_ENTER and text and not self.hidden_input:
             # whether a return key follows is decided by the bbs's answer.
             cursor = self.screen.cursor
-            self.pending_return = (cursor.y, cursor.x, text)
+            self.pending_return = (cursor.y, cursor.x, text, time.time())
             self.queue_keys(text)
             return
         keys = keys_of(aid, text)
@@ -1192,26 +1199,46 @@ class TN3270Client(BaseClient):
                 now - max(self.hold_time, self.output_time or 0)
                 >= self.ANSWER_IDLE)
 
+    def echoed(self):
+        """
+        Whether the bbs has displayed text sent without a return key.
+
+        It is displayed at its cursor, as a prompt of a line does, rather
+        than taken as a key of a command.
+        """
+        row, col, text, _ = self.pending_return
+        cursor = self.screen.cursor
+        line = self.screen.buffer[row]
+        shown = u''.join(line[idx].data for idx in range(
+            col, min(col + len(text), self.columns)))
+        return ((cursor.y, cursor.x) == (row, col + len(text)) and
+                shown.lower() == text.lower())
+
+    def follow_echo(self):
+        """
+        Send a return key following text the bbs has displayed, or return
+        False.  It is forgotten when the bbs has not, within
+        :attr:`ECHO_MAX` seconds.
+        """
+        if self.echoed():
+            self.pending_return = None
+            self.queue_keys(u'\r')
+            return True
+        if time.time() - self.pending_return[3] >= self.ECHO_MAX:
+            self.pending_return = None
+        return False
+
     def release(self):
         """
         Unlock the keyboard, once the bbs has answered an attention key.
 
         Text sent without a return key is followed by one when the bbs
-        displayed it, at its cursor, as a prompt of a line does, rather
-        than taking it as a key of a command.
+        displayed it, see :meth:`echoed`.  A slow bbs may display it later
+        than its answer, see :meth:`draw`.
         """
-        if self.pending_return:
-            row, col, text = self.pending_return
-            self.pending_return = None
-            cursor = self.screen.cursor
-            line = self.screen.buffer[row]
-            shown = u''.join(line[idx].data for idx in range(
-                col, min(col + len(text), self.columns)))
-            if ((cursor.y, cursor.x) == (row, col + len(text)) and
-                    shown.lower() == text.lower()):
-                self.queue_keys(u'\r')
-                self.hold_time = time.time()
-                return
+        if self.pending_return and self.follow_echo():
+            self.hold_time = time.time()
+            return
         self.hold_time = None
         self.restore_pending = self.place_cursor = True
         for row in self.field_rows:
@@ -1262,6 +1289,10 @@ class TN3270Client(BaseClient):
         """ Buffer a write of what has changed on the screen, if any. """
         if self.hold_time is not None and self.answered():
             self.release()
+        elif self.pending_return and self.hold_time is None:
+            # before the text is drawn, so that the return key is sent
+            # before the terminal is seen to wait for one.
+            self.follow_echo()
         if self.help_pending:
             page = self.help_pending
             self.help_pending, self.showing_help = False, True
