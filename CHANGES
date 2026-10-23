@@ -58,6 +58,9 @@
     from menus and message lists and presses keys named on their bars; and
     the editor's window is typed in, its rows input fields.  A logon
     screen, the command line and PF keys are as of VTAM and ISPF.
+  - enhancement: web modules 'online', listing the users logged in and their
+    activity, and 'automsg', listing the goodbye messages said at logoff.
+    Sessions report their handle and activity to the engine for them.
   - removed: the shroo.ms intra-bbs oneliners integration (its parse.com
     backend was discontinued).
   - security: sftp permitted non-sysop users to overwrite any existing file,

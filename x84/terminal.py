@@ -306,6 +306,8 @@ class TerminalProcess(object):
         self.timeout = get_ini('system', 'timeout', getter='getint') or 0
         self.timeout_held = False
         self._released = 0
+        #: handle and activity, as last reported by the session.
+        self.info = dict()
 
     def hold_timeout(self, held):
         """ Hold the idle timeout, or release it, counting idle time anew. """

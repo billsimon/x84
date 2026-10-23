@@ -460,6 +460,10 @@ def session_recv(terminals, log, tap_events):
                               .format(tty=tty, data=data))
                 tty.hold_timeout(bool(data))
 
+            # 'session-info': handle and activity, such as for the web
+            elif event == 'session-info':
+                tty.info = data
+
             # 'db*': access DBProxy API for shared sqlitedict
             elif event.startswith('db'):
                 DBHandler(tty.master_write, event, data).start()
