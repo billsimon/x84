@@ -105,6 +105,8 @@
     ~/.x84.
   - bugfix: paging down the hackernews article list skipped articles, moving
     by rows rather than by the articles displayed.
+  - bugfix: a web module's url keyword, such as 'server', replaced the web
+    server's own function by that name; '/oneliners/0' listed every oneliner.
 
 2.0.15
   - bugfix: upgraded six version to 1.9.0 to meet blessed requirements
