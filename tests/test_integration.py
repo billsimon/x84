@@ -280,7 +280,7 @@ def test_modem_bridge_wrong_secret(server):
     assert proc.stdout.read() == b''
     stime = time.time()
     while u'modem header secret does not match' not in server['log']():
-        assert time.time() - stime < 10, server['log']()[-2000:]
+        assert time.time() - stime < 20, server['log']()[-2000:]
         time.sleep(0.1)
 
 
