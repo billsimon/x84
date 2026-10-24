@@ -88,6 +88,16 @@ a terminal session; accepting command options through the use of GET
 parameters; how Python classes ultimately translate into URL handlers; and
 exposing URL handlers to the x/84 engine process.
 
+Two more are included: ``online``, at ``/online``, lists the users logged in,
+their activity and idle time, as reported to the engine by their sessions; and
+``automsg``, at ``/automsg`` or ``/automsg/20``, lists the last goodbye
+messages said at logoff.  Both accept GET parameter ``json`` for JSON,
+``text`` for plain text, or ``embed`` for only the html list, suitable for
+including in another page.  To serve all four::
+
+    [web]
+    modules = oneliners, lastcallers, online, automsg
+
 The handler class
 -----------------
 

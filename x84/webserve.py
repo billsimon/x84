@@ -45,8 +45,9 @@ def get_urls_funcs(web_modules):
     # to a non-op to avoid 404 errors.
     # See: http://webpy.org/docs/0.3/api#web.application
     urls = ('/favicon.ico', 'favicon')
-    funcs = globals()
-    funcs['favicon'] = Favicon
+    # handler classes by url keyword, apart from the globals of this module,
+    # which a keyword such as 'server' or 'main' would otherwise replace.
+    funcs = {'favicon': Favicon}
 
     log.debug('add url {0} => {1}'.format(
         '/favicon.ico', Favicon.__name__))
@@ -66,6 +67,10 @@ def get_urls_funcs(web_modules):
         api = module.web_module()
 
         for key in api['funcs']:
+            if key in funcs and funcs[key] is not api['funcs'][key]:
+                log.warning('module {module} replaces url keyword {key!r} '
+                            'of {prior}'.format(module=mod, key=key,
+                                                prior=funcs[key].__name__))
             funcs[key] = api['funcs'][key]
 
         # use zip to transform (1,2,3,4,5,6,7,8) =>

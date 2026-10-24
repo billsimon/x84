@@ -58,6 +58,9 @@
     from menus and message lists and presses keys named on their bars; and
     the editor's window is typed in, its rows input fields.  A logon
     screen, the command line and PF keys are as of VTAM and ISPF.
+  - enhancement: web modules 'online', listing the users logged in and their
+    activity, and 'automsg', listing the goodbye messages said at logoff.
+    Sessions report their handle and activity to the engine for them.
   - removed: the shroo.ms intra-bbs oneliners integration (its parse.com
     backend was discontinued).
   - security: sftp permitted non-sysop users to overwrite any existing file,
@@ -105,6 +108,8 @@
     ~/.x84.
   - bugfix: paging down the hackernews article list skipped articles, moving
     by rows rather than by the articles displayed.
+  - bugfix: a web module's url keyword, such as 'server', replaced the web
+    server's own function by that name; '/oneliners/0' listed every oneliner.
 
 2.0.15
   - bugfix: upgraded six version to 1.9.0 to meet blessed requirements

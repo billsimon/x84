@@ -209,6 +209,7 @@ class Session(object):
 
             if (self.terminal.kind or '').startswith(('xterm', 'rxvt')):
                 self.write(u'\x1b]2;{0}\x07'.format(value))
+            self._send_info()
 
     @property
     def user(self):
@@ -221,6 +222,20 @@ class Session(object):
         #         Missing docstring
         self.log.info("user {!r} -> {!r}".format(self._user, value.handle))
         self._user = value
+        self._send_info()
+
+    def _send_info(self):
+        """
+        Tell the engine the handle and activity of this session.
+
+        These are kept by the engine for those outside of any session,
+        such as the ``online`` web module.
+        """
+        self.send_event('session-info', {
+            # None until a user is assigned, such as by login.
+            'handle': self._user.handle if self._user else None,
+            'activity': self.activity,
+        })
 
     @property
     def encoding(self):
@@ -595,6 +610,8 @@ class Session(object):
         - ``lock-<name>``: Fine-grained global bbs locking.
 
         - ``hold-timeout``: Hold the idle timeout (True), or release it.
+
+        - ``session-info``: Handle and activity of this session, as a dict.
 
         :param str event: event name.
         :param data: event data.
