@@ -17,7 +17,7 @@ class OnelinersApi(object):
         num = int(num)
         oneliners = sorted((int(k), v) for (k, v) in
                            DBProxy('oneliner', use_session=False).items())
-        last = oneliners[-num:]
+        last = oneliners[max(0, len(oneliners) - num):]
 
         # output JSON instead?
         if 'json' in web.input(_method='get'):
