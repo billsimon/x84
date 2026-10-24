@@ -175,7 +175,8 @@ def disconnect(sessions):
     session = getsession()
     (node, tgt_session) = get_node(sessions)
     if node is not None:
-        session.send_event('remote-disconnect', tgt_session['sid'])
+        # the engine finds the session of the first item.
+        session.send_event('remote-disconnect', (tgt_session['sid'],))
         return True
 
 

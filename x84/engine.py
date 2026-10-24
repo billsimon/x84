@@ -318,7 +318,7 @@ def session_send(terminals):
                 kill_session(tty.client, 'no tty for socket data')
 
         # poll about and kick off idle users
-        elif tty.timeout and tty.client.idle() > tty.timeout:
+        elif tty.timed_out():
             kill_session(tty.client, 'timeout')
 
 
@@ -452,6 +452,13 @@ def session_recv(terminals, log, tap_events):
                     log.debug('[{tty.sid}] set-timeout {data}'
                               .format(tty=tty, data=data))
                 tty.timeout = data
+
+            # 'hold-timeout': hold the idle timeout, such as during chat
+            elif event == 'hold-timeout':
+                if tap_events:
+                    log.debug('[{tty.sid}] hold-timeout {data}'
+                              .format(tty=tty, data=data))
+                tty.hold_timeout(bool(data))
 
             # 'db*': access DBProxy API for shared sqlitedict
             elif event.startswith('db'):

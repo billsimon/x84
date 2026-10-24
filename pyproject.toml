@@ -24,6 +24,7 @@ dependencies = [
     "requests>=2.31",
     "sauce>=1.4",
     "sqlitedict>=2.1",
+    "wcwidth>=0.2",
     "xmodem>=0.4.7",
 ]
 classifiers = [

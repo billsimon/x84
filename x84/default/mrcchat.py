@@ -34,6 +34,10 @@ from x84.mrc import (Packet, RESERVED, format_packet, parse_packet,
                      name_tag, site_tag, strip_pipes, ascii_text)
 from editor import ctrl, is_escape
 
+#: chatting users are not disconnected for idling, see
+#: :meth:`x84.bbs.session.Session.runscript`.
+IDLE_TIMEOUT = False
+
 #: how many messages of scrollback to keep.
 MAX_SCROLLBACK = get_ini('mrc', 'max_scrollback', getter='getint') or 200
 

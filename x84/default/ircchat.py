@@ -54,6 +54,10 @@ import irc.client
 import irc.events
 from jaraco.stream.buffer import LenientDecodingLineBuffer
 
+#: chatting users are not disconnected for idling, see
+#: :meth:`x84.bbs.session.Session.runscript`.
+IDLE_TIMEOUT = False
+
 #: how many messages of scrollback to keep.
 MAX_SCROLLBACK = get_ini('irc', 'max_scrollback', getter='getint') or 200
 

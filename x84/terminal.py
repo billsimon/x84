@@ -1,6 +1,7 @@
 """ Terminal handler for x/84 """
 import contextlib
 import threading
+import time
 import logging
 import codecs
 import sys
@@ -170,7 +171,8 @@ def determine_encoding(env):
         'syncterm': 'cp437',
     }.get(env['TERM'], default_encoding)
 
-    return env.get('encoding', fallback_encoding)
+    from x84.encodings import session_encoding
+    return session_encoding(env.get('encoding', fallback_encoding))
 
 
 #: environment variables of the server process, removed before initializing
@@ -180,6 +182,24 @@ SERVER_TERMINAL_VARIABLES = (
     'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ANSICON', 'ConEmuANSI',
     'WT_SESSION', 'LINES', 'COLUMNS',
 )
+
+
+def family_kind(kind, default):
+    """
+    Return the terminal type of the family of ``kind``, a type not of the
+    terminal database: such as ``xterm`` of ``xterm-color``; else
+    ``default``.
+    """
+    import jinxed
+    family = kind.split('-', 1)[0]
+    if family and family != kind:
+        try:
+            jinxed.Terminal(family)
+        except jinxed.error:
+            pass
+        else:
+            return family
+    return default
 
 
 def init_term(writer, env):
@@ -216,7 +236,8 @@ def init_term(writer, env):
                     stream=IPCStream(writer=writer),
                     rows=int(env.get('LINES', '24')),
                     columns=int(env.get('COLUMNS', '80')),
-                    kind_fallback=termcap_unknown)
+                    kind_fallback=family_kind(env['TERM'],
+                                              termcap_unknown))
 
     if term.kind != env['TERM']:
         # the given environment's TERM failed terminfo lookup, because,
@@ -283,6 +304,23 @@ class TerminalProcess(object):
         (master_write, self.master_read) = master_pipes
         self.master_write = LockedConnection(master_write)
         self.timeout = get_ini('system', 'timeout', getter='getint') or 0
+        self.timeout_held = False
+        self._released = 0
+
+    def hold_timeout(self, held):
+        """ Hold the idle timeout, or release it, counting idle time anew. """
+        if self.timeout_held and not held:
+            self._released = time.time()
+        self.timeout_held = held
+
+    def idle(self):
+        """ Time elapsed since input, or since the timeout was released. """
+        return min(self.client.idle(), time.time() - self._released)
+
+    def timed_out(self):
+        """ Whether the session has been idle longer than its timeout. """
+        return bool(self.timeout and not self.timeout_held
+                    and self.idle() > self.timeout)
 
 
 def flush_queue(queue):

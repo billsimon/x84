@@ -111,6 +111,14 @@ def test_send_unicode_escapes_iac():
     assert bytes(client.send_buffer) == IAC + IAC
 
 
+def test_send_unicode_cp437_glyphs():
+    # glyphs of cp437 art, such as those of a cp437 door, are sent as the
+    # bytes they decode from, rather than '?'.
+    client = make_client()
+    client.send_unicode(u'☺▲↑ \xa0\x1b[m', encoding='cp437')
+    assert bytes(client.send_buffer) == b'\x01\x1e\x18 ' + IAC + IAC + b'\x1b[m'
+
+
 def test_request_env_is_bytes():
     client = make_client()
     client.request_env()
