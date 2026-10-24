@@ -1,17 +1,19 @@
 """
-IBM PC Code Page 437 codec for x/84, of the glyphs of its low bytes.
+IBM PC Code Page 437 codec for x/84 that decodes control bytes as pictures.
 
 Generated from:
 ftp://ftp.unicode.org/Public/MAPPINGS/VENDORS/MICSFT/PC/CP437.TXT
 
-As drawn by the terminals of DOS (and SyncTerm), the bytes 0x01 through
-0x1f and 0x7f decode as their glyphs, but for those that terminals act
-upon: NUL, BEL, BS, TAB, LF, CR, ESC, and SUB, the DOS end of file.
+DOS and SyncTERM draw the bytes 0x01 through 0x1f, and 0x7f, as pictures:
+0x01 is ☺, 0x1e is ▲, and 0x7f is ⌂.  This codec decodes them as those
+pictures, except for the bytes that terminals act on, which decode as
+themselves: NUL, BEL, BS, TAB, LF, CR, ESC, and SUB (the DOS end-of-file
+mark).
 
-Each glyph encodes as the byte it decodes from, and RIGHTWARDS ARROW as
-SUB, which terminals draw as such.  The control characters 0x01 through
-0x1f encode as themselves, so that text decoded either as ``cp437`` or
-as ``cp437_art`` is sent unchanged to a cp437 terminal.
+Each picture encodes back to the byte it was decoded from, and RIGHTWARDS
+ARROW encodes as SUB, which terminals draw as an arrow.  Control characters
+0x01 through 0x1f encode as themselves, so text decoded as either ``cp437``
+or ``cp437_art`` is sent unchanged to a cp437 terminal.
 """
 
 import codecs
