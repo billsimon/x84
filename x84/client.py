@@ -3,6 +3,7 @@
 import errno
 import logging
 import socket
+import ssl
 import threading
 import time
 import warnings
@@ -108,6 +109,11 @@ class BaseClient(object):
             """
             try:
                 return self.sock.send(send_bytes)
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                # a tls socket that cannot send now.  It keeps track of
+                # what it already sent of this data, which is re-buffered
+                # below and so passed to it again, and sends the rest then.
+                return 0
             except OSError as err:
                 if err.errno in (errno.EDEADLK, errno.EAGAIN):
                     self.log.debug('{self.addrport}: {err} (bandwidth exceed)'

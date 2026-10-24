@@ -1,6 +1,7 @@
 """ Tests of the tn3270 server, x84/tn3270.py. """
 # std imports
 import socket
+import ssl
 import threading
 import time
 
@@ -11,13 +12,16 @@ pytest.importorskip('pyte')
 
 # local
 from x84 import tn3270
+from x84.bbs.exception import Disconnected
 from x84.tn3270 import (
     AID_ENTER, AID_PA1, AID_PA2, AID_PF, BLANK, CMD_EW, CMD_EWA, CMD_W,
     COLORS, EOR, FA_NONDISPLAY, HL_REVERSE, HL_UNDERSCORE, IAC,
-    ORDER_SBA, QUERY, TTYPE, ConnectTN3270, TN3270Client, decode_address,
-    encode_address, encode_attr, from_ebcdic, keys_of, parse_input,
-    parse_query_reply, parse_ttype, style_cell, to_ebcdic,
+    ORDER_SBA, QUERY, TTYPE, ConnectTN3270, ConnectTN3270TLS, TN3270Client,
+    TN3270TLSClient, TN3270TLSServer, decode_address, encode_address,
+    encode_attr, from_ebcdic, keys_of, parse_input, parse_query_reply,
+    parse_ttype, style_cell, to_ebcdic,
 )
+from x84.server import get_ssl_context
 
 DO, DONT, WILL, WONT, SB, SE = 253, 254, 251, 252, 250, 240
 EOR_MARK = 239
@@ -776,7 +780,7 @@ class FakeTerminal(object):
         self.sock.setblocking(False)
         try:
             self.data.extend(self.sock.recv(65536))
-        except BlockingIOError:
+        except (BlockingIOError, ssl.SSLWantReadError):
             return
         data, out = self.data, bytearray()
         record = bytearray()
@@ -818,13 +822,38 @@ class FakeTerminal(object):
             self.sock.sendall(out)
 
 
-def negotiate(cfg, ttype, reply=None):
-    """ Negotiate with a fake terminal, returning client and terminal. """
+def tls_pair(tls_cert):
+    """
+    A TN3270TLSClient and its ConnectTN3270TLS, of a socket whose other
+    end, connecting by TLS, is returned with them, the handshake done.
+    """
     ours, theirs = socket.socketpair()
-    ours.setblocking(False)
-    client = TN3270Client(ours, ('127.0.0.1', 3270))
+    client = TN3270TLSClient(ours, ('127.0.0.1', 3271),
+                             context=get_ssl_context(*tls_cert))
+    connect = ConnectTN3270TLS(client)
+    context = ssl.create_default_context(cafile=tls_cert[0])
+    theirs = context.wrap_socket(theirs, server_hostname=u'127.0.0.1',
+                                 do_handshake_on_connect=False)
+    # the engine does not read the socket until the handshake is done.
+    assert client.fileno() is None and not client.recv_ready()
+    thread = threading.Thread(target=theirs.do_handshake)
+    thread.start()
+    connect._set_socket_opts()
+    thread.join()
+    assert client.handshaken and client.fileno() == client.sock.fileno()
+    return client, connect, theirs
+
+
+def negotiate(cfg, ttype, reply=None, tls_cert=None):
+    """ Negotiate with a fake terminal, returning client and terminal. """
+    if tls_cert:
+        client, connect, theirs = tls_pair(tls_cert)
+    else:
+        ours, theirs = socket.socketpair()
+        ours.setblocking(False)
+        client = TN3270Client(ours, ('127.0.0.1', 3270))
+        connect = ConnectTN3270(client)
     terminal = FakeTerminal(theirs, ttype, reply)
-    connect = ConnectTN3270(client)
     connect.TIME_NEGOTIATE = connect.TIME_QUERY = 1.0
     result = {}
 
@@ -859,6 +888,94 @@ def test_negotiate_extended(cfg):
     assert terminal.records[0] == QUERY
     assert terminal.records[-1][0] == CMD_EWA
     assert client.showing_help
+
+
+def test_negotiate_tls(cfg, tls_cert):
+    client, terminal, error = negotiate(
+        cfg, 'IBM-3279-5-E', QUERY_REPLY, tls_cert=tls_cert)
+    assert error is None
+    assert client.sock.version() in ('TLSv1.2', 'TLSv1.3')
+    assert (client.rows, client.columns) == (27, 132)
+    assert terminal.records[0] == QUERY
+    assert terminal.records[-1][0] == CMD_EWA
+
+
+def test_tls_record_received_whole(cfg, tls_cert):
+    # a record larger than a read of the socket is received at once, none
+    # of it left inside the TLS connection, where select does not see it.
+    client, connect, theirs = tls_pair(tls_cert)
+    records = []
+    client.handle_record = records.append
+    record = bytes((AID_ENTER,)) + b'\xc1' * 5000
+    send_record(theirs, record)
+    stime = time.time()
+    while not records and time.time() - stime < 2:
+        if client.recv_ready():
+            received = client.socket_recv()
+            assert received in (0, len(record) + 2)
+    assert records == [record]
+    assert not client.recv_ready()
+
+
+def test_tls_shutdown(cfg, tls_cert):
+    # the terminal is told that the connection ends, rather than finding
+    # it closed.
+    client, connect, theirs = tls_pair(tls_cert)
+    client.shutdown()
+    theirs.settimeout(2)
+    assert theirs.recv(1024) == b''
+
+
+def test_tls_handshake_failed(cfg, tls_cert):
+    # such as a terminal connecting without TLS.
+    ours, theirs = socket.socketpair()
+    client = TN3270TLSClient(ours, ('127.0.0.1', 3271),
+                             context=get_ssl_context(*tls_cert))
+    theirs.sendall(bytes((IAC, WILL, TTYPE)) * 10)
+    with pytest.raises(Disconnected):
+        ConnectTN3270TLS(client)._set_socket_opts()
+    assert not client.handshaken and client.fileno() is None
+    theirs.close()
+
+
+def test_tls_send_retried():
+    # a tls socket that cannot send now sends the same data later.
+    class Sock(object):
+        sent = []
+        blocked = True
+
+        def send(self, data):
+            if self.blocked:
+                raise ssl.SSLWantWriteError()
+            self.sent.append(data)
+            return len(data)
+
+    client = TN3270Client(Sock(), ('127.0.0.1', 3271))
+    client.send_str(b'abc')
+    assert client.send() == 0
+    client.send_str(b'def')
+    client.sock.blocked = False
+    assert client.send() == 6
+    assert client.sock.sent == [b'abcdef']
+
+
+def test_tls_server(cfg, tls_cert):
+    cfg.set('tn3270', 'tls_port', '0')
+    with pytest.raises(SystemExit):
+        TN3270TLSServer(cfg)
+    cfg.set('tn3270', 'cert', tls_cert[0])
+    cfg.set('tn3270', 'key', tls_cert[0])
+    with pytest.raises(SystemExit):
+        # the certificate is not a key.
+        TN3270TLSServer(cfg)
+    cfg.set('tn3270', 'key', tls_cert[1])
+    server = TN3270TLSServer(cfg)
+    try:
+        assert server.server_socket.getsockname()[1] != 3270
+        assert TN3270TLSServer.client_factory_kwargs(server) == {
+            'context': server.context}
+    finally:
+        server.server_socket.close()
 
 
 def test_negotiate_dx3270(cfg):

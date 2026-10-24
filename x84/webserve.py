@@ -2,11 +2,12 @@
 """ web server for x/84. """
 import threading
 import logging
-import ssl
 import sys
 import os
 
 import web
+
+from x84.server import get_ssl_context
 
 
 class Favicon(object):
@@ -89,30 +90,6 @@ def get_urls_funcs(web_modules):
                     url, funcs[f_key].__name__))
         urls += api['urls']
     return urls, funcs
-
-
-def get_ssl_context(cert, key, chain=None):
-    """
-    Return :class:`ssl.SSLContext` for serving https.
-
-    :param str cert: path to certificate file.
-    :param str key: path to private key file.
-    :param str chain: optional path to certificate chain file.
-    :raises ValueError: certificate or key could not be loaded.
-    """
-    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    try:
-        context.load_cert_chain(certfile=cert, keyfile=key)
-    except (OSError, ssl.SSLError) as err:
-        # wrap exception to contain filepath to 'cert' and 'key' files,
-        # which will hopefully help the user better understand what
-        # otherwise be very obscure.
-        raise ValueError('Exception loading ssl certificate file {0!r} '
-                         'and key file {1!r}: {2}'.format(cert, key, err))
-    if chain is not None:
-        context.load_verify_locations(cafile=chain)
-    return context
 
 
 def server(urls, funcs):

@@ -34,6 +34,39 @@ Setting it up
 
     c3270 -model 3279-2-E localhost:3270
 
+TLS
+===
+
+Terminals may connect by TLS, encrypted, on a separate port.  Set
+``tls_port``, and the paths to a certificate and its private key::
+
+    [tn3270]
+    enabled = yes
+    tls_port = 3271
+    cert = /etc/letsencrypt/live/bbs.example.com/fullchain.pem
+    key = /etc/letsencrypt/live/bbs.example.com/privkey.pem
+
+The tn3270 server then listens on both ports, at ``addr``.  On the TLS
+port, a terminal begins TLS as it connects: the "SSL" or "TLS" setting in
+most emulators, or the ``L:`` prefix on the host name in the x3270
+family::
+
+    c3270 L:bbs.example.com:3271
+
+The x3270 family begins TLS by itself on port 992, without the prefix.
+Ports below 1024 can be bound only by root on most systems, so to use it,
+forward port 992 to ``tls_port``.
+
+Terminals check the certificate: it must name the board's host and be
+signed by an authority that they trust, such as Let's Encrypt, and the
+file must include its chain, as ``fullchain.pem`` does.  A terminal
+refuses a self-signed certificate unless told to accept it, in the x3270
+family by the ``Y:`` prefix, as ``Y:L:bbs.example.com:3271``.  The server
+logs a refused certificate as a failed handshake.
+
+The certificate is loaded when the board starts: restart the board after
+renewing it.
+
 Using the board
 ===============
 
@@ -167,6 +200,10 @@ All of section ``[tn3270]``:
 
 - ``enabled``: whether to listen for 3270 terminals, ``no`` by default.
 - ``addr``, ``port``: where to listen, ``127.0.0.1`` and ``3270``.
+- ``tls_port``: a port to listen on for terminals connecting by TLS, none
+  by default.  See `TLS`_.
+- ``cert``, ``key``: paths to the certificate, with its chain, and to its
+  private key, for ``tls_port``.
 - ``codepage``: the EBCDIC code page of terminals, ``auto`` by default:
   the code page a terminal reports, when it answers a query, as an
   extended terminal does; but ``bracket`` for the x3270 family, and for

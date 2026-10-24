@@ -69,7 +69,7 @@ class Screen(object):
 
 
 @pytest.fixture(scope='module')
-def server(tmp_path_factory, request):
+def server(tmp_path_factory, request, tls_cert):
     """ Start x84 server on free ports, return dict of ports and paths. """
     import socket
     import x84.bbs.ini
@@ -81,7 +81,7 @@ def server(tmp_path_factory, request):
 
     root = tmp_path_factory.mktemp('x84')
     ports = {'telnet': free_port(), 'ssh': free_port(), 'modem': free_port(),
-             'tn3270': free_port()}
+             'tn3270': free_port(), 'tn3270_tls': free_port()}
     cfg = x84.bbs.ini.init_bbs_ini()
     cfg.set('system', 'datapath', str(root / 'data'))
     cfg.set('system', 'password_digest', 'internal')
@@ -95,6 +95,9 @@ def server(tmp_path_factory, request):
     cfg.set('modem', 'secret', 'modem-secret')
     cfg.set('tn3270', 'enabled', 'yes')
     cfg.set('tn3270', 'port', str(ports['tn3270']))
+    cfg.set('tn3270', 'tls_port', str(ports['tn3270_tls']))
+    cfg.set('tn3270', 'cert', tls_cert[0])
+    cfg.set('tn3270', 'key', tls_cert[1])
     with open(root / 'default.ini', 'w') as fout:
         cfg.write(fout)
     log = x84.bbs.ini.init_log_ini(log_folder=str(root))
@@ -113,7 +116,7 @@ def server(tmp_path_factory, request):
         return (root / 'output.log').read_text()
 
     stime = time.time()
-    while 'tn3270 listening' not in server_log():
+    while 'tn3270 tls listening' not in server_log():
         assert proc.poll() is None, server_log()
         assert time.time() - stime < 60, server_log()
         time.sleep(0.2)
@@ -382,11 +385,15 @@ class S3270(object):
 
     """ A 3270 terminal, by s3270 of the x3270 family. """
 
-    def __init__(self, port, model='3279-2-E'):
+    def __init__(self, port, model='3279-2-E', tls_ca=None):
+        """ Connect to ``port``, by TLS when given ``tls_ca``. """
+        args = ['s3270', '-model', model, '-utf8']
+        if tls_ca:
+            args += ['-cafile', tls_ca]
         self.proc = subprocess.Popen(
-            ['s3270', '-model', model, '-utf8'], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, text=True)
-        self.cmd('Connect(127.0.0.1:{0})'.format(port))
+            args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.cmd('Connect({0}127.0.0.1:{1})'.format(
+            u'L:' if tls_ca else u'', port))
 
     def cmd(self, command):
         """ Run s3270 ``command``, returning its lines of data. """
@@ -506,6 +513,19 @@ def test_tn3270_login(server):
     term.close()
 
 
+@pytest.mark.skipif(not shutil.which('s3270'),
+                    reason='s3270, of the x3270 family, is not installed')
+def test_tn3270_tls(server, tls_cert):
+    """ A 3270 terminal connects by TLS, verifying the certificate. """
+    term = S3270(server['tn3270_tls'], tls_ca=tls_cert[0])
+    term.expect(r'PRESS ENTER TO LOG ON')
+    assert term.cmd('Query(Tls)') == [u'secure host-verified']
+    term.cmd('Enter')
+    term.expect(r'Login:')
+    term.close()
+    assert u'Traceback' not in server['log']()
+
+
 def test_sigterm_shutdown(server):
     """ Must be last: SIGTERM ends the server gracefully. """
     screen = Screen(server['telnet'])
@@ -515,3 +535,4 @@ def test_sigterm_shutdown(server):
     screen.read(2)
     assert screen.eof
     assert u'server shutdown' in server['log']()
+

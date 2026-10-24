@@ -27,6 +27,10 @@ The following options are available, but not required:
 
 - ``addr``, ``port``: where to listen, ``127.0.0.1`` port ``3270`` by
   default.
+- ``tls_port``: a port to listen on for terminals connecting by TLS, such
+  as with the ``L:`` prefix in the x3270 family, none by default.  It
+  requires ``cert`` and ``key``: paths to the certificate, with its chain,
+  and to its private key.
 - ``codepage``: the EBCDIC code page of terminals, by default ``auto``:
   that a terminal reports, when it answers a query, but ``bracket`` for
   the x3270 family, and ``cp037`` for terminals that report none.
@@ -57,8 +61,11 @@ This server requires pyte, installed by the ``tn3270`` extra::
 import codecs
 import functools
 import itertools
+import logging
+import os
 import re
 import select
+import ssl
 import threading
 import time
 import unicodedata
@@ -66,7 +73,7 @@ import unicodedata
 # local
 from x84.bbs.exception import Disconnected
 from x84.client import BaseClient, BaseConnect
-from x84.server import BaseServer
+from x84.server import BaseServer, get_ssl_context
 from x84.terminal import spawn_client_session
 
 try:
@@ -825,8 +832,9 @@ class TN3270Client(BaseClient):
         :rtype: int
         """
         try:
-            data = self.sock.recv(self.BLOCKSIZE_RECV)
-        except BlockingIOError:
+            data = self._recv()
+        except (BlockingIOError, ssl.SSLWantReadError,
+                ssl.SSLWantWriteError):
             return 0
         except OSError as err:
             raise Disconnected('socket_recv error: {0}'.format(err))
@@ -837,6 +845,10 @@ class TN3270Client(BaseClient):
         for byte in data:
             self._telnet_byte(byte)
         return len(data)
+
+    def _recv(self):
+        """ Return data received from the socket. """
+        return self.sock.recv(self.BLOCKSIZE_RECV)
 
     def _telnet_byte(self, byte):
         """ Receive one byte of the telnet stream. """
@@ -1536,6 +1548,70 @@ class TN3270Client(BaseClient):
         return self.page_record(items)
 
 
+class TN3270TLSClient(TN3270Client):
+
+    """
+    A 3270 terminal connected by TLS.
+
+    The engine does not read the socket until :class:`ConnectTN3270TLS`
+    has completed the TLS handshake.  A TLS connection must not be used by
+    two threads at once, and the negotiating thread sends while the engine
+    receives, so the socket is used only under a lock.
+    """
+
+    def __init__(self, sock, address_pair, on_naws=None, context=None):
+        sock = context.wrap_socket(sock, server_side=True,
+                                   do_handshake_on_connect=False)
+        super(TN3270TLSClient, self).__init__(sock, address_pair, on_naws)
+        #: whether the TLS handshake has completed.
+        self.handshaken = False
+        self._sock_lock = threading.RLock()
+
+    def fileno(self):
+        """ File descriptor number of socket, None until the handshake. """
+        if not self.handshaken:
+            return None
+        return super(TN3270TLSClient, self).fileno()
+
+    def recv_ready(self):
+        """ Whether data is awaiting on the socket. """
+        return self.handshaken and super(TN3270TLSClient, self).recv_ready()
+
+    def _recv(self):
+        """
+        Return data received from the socket.
+
+        Data decrypted beyond the size asked for waits inside the TLS
+        connection, where select does not see it, so it is received too.
+        """
+        with self._sock_lock:
+            data = self.sock.recv(self.BLOCKSIZE_RECV)
+            while data and self.sock.pending():
+                data += self.sock.recv(self.sock.pending())
+        return data
+
+    def send(self):
+        """
+        Send any data buffered and return number of bytes send.
+
+        :raises Disconnected: client has disconnected (cannot write to socket).
+        """
+        with self._sock_lock:
+            return super(TN3270TLSClient, self).send()
+
+    def shutdown(self):
+        """ End the TLS connection, then shutdown and close socket. """
+        with self._sock_lock:
+            if self.handshaken:
+                # tell the terminal that the connection ends, as some report
+                # an error when it closes without this.
+                try:
+                    self.sock.unwrap()
+                except (OSError, ValueError):
+                    pass
+            super(TN3270TLSClient, self).shutdown()
+
+
 class ConnectTN3270(BaseConnect):
 
     """ Negotiate with a 3270 terminal, then spawn its session. """
@@ -1662,6 +1738,33 @@ class ConnectTN3270(BaseConnect):
             pass
 
 
+class ConnectTN3270TLS(ConnectTN3270):
+
+    """ Complete the TLS handshake with a 3270 terminal, then negotiate. """
+
+    def _set_socket_opts(self):
+        """
+        Complete the TLS handshake, then set socket options.
+
+        :raises Disconnected: the handshake failed.
+        """
+        client = self.client
+        client.sock.settimeout(self.TIME_NEGOTIATE)
+        try:
+            client.sock.do_handshake()
+        except OSError as err:
+            # such as by a terminal that refuses the certificate, or one
+            # that is not connecting by TLS.
+            self.log.info('{client.addrport}: tls handshake failed: {err}'
+                          .format(client=client, err=err))
+            raise Disconnected('tls handshake: {0}'.format(err))
+        super(ConnectTN3270TLS, self)._set_socket_opts()
+        client.handshaken = True
+        self.log.debug('{client.addrport}: {version}, {cipher}'.format(
+            client=client, version=client.sock.version(),
+            cipher=client.sock.cipher()[0]))
+
+
 class TN3270Server(BaseServer):
 
     """ Server for 3270 terminals, by the tn3270 protocol. """
@@ -1670,3 +1773,40 @@ class TN3270Server(BaseServer):
     connect_factory = ConnectTN3270
     config_section = 'tn3270'
     default_port = 3270
+
+
+class TN3270TLSServer(TN3270Server):
+
+    """ Server for 3270 terminals connecting by TLS, on ``tls_port``. """
+
+    client_factory = TN3270TLSClient
+    connect_factory = ConnectTN3270TLS
+    port_option = 'tls_port'
+    name = 'tn3270 tls'
+
+    def __init__(self, config):
+        """
+        Class initializer: load the certificate, then bind and listen.
+
+        :raises SystemExit: the certificate or key could not be loaded, or
+            the address could not be bound.
+        """
+        log = logging.getLogger(__name__)
+        cert, key = (os.path.expanduser(config.get(
+            self.config_section, option, fallback=u''))
+            for option in ('cert', 'key'))
+        if not (cert and key):
+            log.error('[tn3270] tls_port requires options cert and key')
+            raise SystemExit(1)
+        try:
+            #: :class:`ssl.SSLContext` for its connections.
+            self.context = get_ssl_context(cert, key)
+        except ValueError as err:
+            log.error(err)
+            raise SystemExit(1)
+        super(TN3270TLSServer, self).__init__(config)
+
+    @classmethod
+    def client_factory_kwargs(cls, instance):
+        """ Return keyword arguments for the client_factory. """
+        return {'context': instance.context}

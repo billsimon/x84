@@ -1,6 +1,31 @@
 """ Package provides base server for x/84. """
 import logging
 import socket
+import ssl
+
+
+def get_ssl_context(cert, key, chain=None):
+    """
+    Return :class:`ssl.SSLContext` for a TLS server, such as https.
+
+    :param str cert: path to certificate file.
+    :param str key: path to private key file.
+    :param str chain: optional path to certificate chain file.
+    :raises ValueError: certificate or key could not be loaded.
+    """
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        context.load_cert_chain(certfile=cert, keyfile=key)
+    except (OSError, ssl.SSLError) as err:
+        # wrap exception to contain filepath to 'cert' and 'key' files,
+        # which will hopefully help the user better understand what
+        # otherwise be very obscure.
+        raise ValueError('Exception loading ssl certificate file {0!r} '
+                         'and key file {1!r}: {2}'.format(cert, key, err))
+    if chain is not None:
+        context.load_verify_locations(cafile=chain)
+    return context
 
 
 class BaseServer(object):
@@ -25,8 +50,15 @@ class BaseServer(object):
     #: Configuration section name containing ``addr`` and ``port`` options.
     config_section = None
 
+    #: Option in :attr:`config_section` that sets the port.
+    port_option = 'port'
+
     #: Default port when not configured.
     default_port = None
+
+    #: Name for the server in log messages; :attr:`config_section` when
+    #: None.
+    name = None
 
     #: Whether connections are subject to fail2ban (see :mod:`x84.fail2ban`).
     fail2ban = True
@@ -36,7 +68,7 @@ class BaseServer(object):
 
         :param configparser.ConfigParser config: bbs configuration, the
             section named by :attr:`config_section` should contain options
-            ``'addr'`` and ``'port'``.
+            ``'addr'``, and the port option, :attr:`port_option`.
         :raises SystemExit: the address could not be bound.
         """
         self.log = logging.getLogger(self.__class__.__module__)
@@ -52,11 +84,11 @@ class BaseServer(object):
         section = self.config_section
         self.address = config.get(section, 'addr')
         self.port = self.default_port
-        if config.has_option(section, 'port'):
-            self.port = config.getint(section, 'port')
+        if config.has_option(section, self.port_option):
+            self.port = config.getint(section, self.port_option)
         self.server_socket = self.bind(self.address, self.port)
-        self.log.info('{section} listening on {self.address}:{self.port}/tcp'
-                      .format(section=section, self=self))
+        self.log.info('{name} listening on {self.address}:{self.port}/tcp'
+                      .format(name=self.name or section, self=self))
 
     def bind(self, address, port):
         """ Return a listening socket bound to ``(address, port)``. """
