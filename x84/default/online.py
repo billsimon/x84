@@ -182,25 +182,17 @@ def disconnect(sessions):
 
 def sendmsg(sessions):
     """
-    Prompt for node and gosub 'writemsg' with recipient set to target user.
+    Prompt for node and write private mail to the user of target session.
     """
-    from x84.bbs import getsession, getterminal, echo, Msg
-    from msgarea import (
-        prompt_subject, prompt_body, prompt_tags, do_send_message)
-    session, term = getsession(), getterminal()
+    from x84.bbs import echo, find_user, gosub
     (node, tgt_session) = get_node(sessions)
     if node is not None:
-        msg = Msg()
-        msg.recipient = tgt_session['handle']
-        colors = {'highlight': term.yellow, 'lowlight': term.green,
-                  'backlight': term.yellow_reverse, 'text': term.white}
-        echo(u'\r\n\r\n')
-        if (prompt_subject(term=term, msg=msg, colors=colors) and
-                prompt_body(term=term, msg=msg, colors=colors) and
-                prompt_tags(session=session, term=term, msg=msg,
-                            colors=colors, public=False)):
-            do_send_message(session=session, term=term, msg=msg,
-                            colors=colors)
+        # a caller still at the login prompt is not yet a user.
+        handle = find_user(tgt_session.get('handle') or u'')
+        if handle is None:
+            echo(u'\r\nnot a user.')
+            return False
+        gosub('mail', write=True, recipient=handle)
         return True
 
 
@@ -260,6 +252,7 @@ def main():
                 sessions[sid]['handle'] = handle
             else:
                 sessions[sid] = dict((
+                    ('sid', sid),
                     ('handle', handle),
                     ('lastfresh', time.time()),
                     ('lastasked', time.time()),))

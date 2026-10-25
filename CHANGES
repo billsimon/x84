@@ -92,6 +92,10 @@
     batch limits could skip messages, and duplicates were not detected.
   - bugfix: who's online 'send message' called a script that no longer
     exists, and its remote-disconnect disconnected the requesting session.
+  - bugfix: who's online 'send message' failed, importing functions that
+    the message area no longer has; it writes private mail now.  Chat
+    requests to callers by rlogin, modem or tn3270 were rejected, as only
+    sftp sessions, which have no terminal, are meant to be.
   - bugfix: chat resized the terminal to swapped dimensions after an
     event-driven chat request.
   - bugfix: oneliners minimum-elapsed time between posts was inverted.
