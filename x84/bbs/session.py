@@ -154,6 +154,7 @@ class Session(object):
                 'encoding',
                 'activity',
                 'idle',
+                'kind',
                 'node',
                 'pid',
                 'sid',

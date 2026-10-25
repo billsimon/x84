@@ -56,6 +56,12 @@ def test_global_broadcast_is_named_event(session):
     assert session.session.read_event('oneliner', timeout=2) is True
 
 
+def test_info_names_kind(session):
+    # who's online shows the kind of each session's connection.
+    session.session._node = 1
+    assert session.session.to_dict()['kind'] == 'test'
+
+
 def test_global_ayt_is_acknowledged(session):
     session.send('global', ('AYT', 'other-sid'))
     session.session.poll_event('anything')

@@ -523,7 +523,10 @@ def test_tn3270_tls(server, tls_cert):
     term.cmd('Enter')
     term.expect(r'Login:')
     term.close()
-    assert u'Traceback' not in server['log']()
+    log = server['log']()
+    assert u'tn3270-tls connection from 127.0.0.1' in log
+    assert u'[tn3270-tls-127.0.0.1:' in log
+    assert u'Traceback' not in log
 
 
 def test_sigterm_shutdown(server):

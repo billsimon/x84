@@ -1559,6 +1559,8 @@ class TN3270TLSClient(TN3270Client):
     receives, so the socket is used only under a lock.
     """
 
+    kind = 'tn3270-tls'
+
     def __init__(self, sock, address_pair, on_naws=None, context=None):
         sock = context.wrap_socket(sock, server_side=True,
                                    do_handshake_on_connect=False)

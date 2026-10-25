@@ -894,6 +894,7 @@ def test_negotiate_tls(cfg, tls_cert):
     client, terminal, error = negotiate(
         cfg, 'IBM-3279-5-E', QUERY_REPLY, tls_cert=tls_cert)
     assert error is None
+    assert client.kind == client.env['connection-type'] == 'tn3270-tls'
     assert client.sock.version() in ('TLSv1.2', 'TLSv1.3')
     assert (client.rows, client.columns) == (27, 132)
     assert terminal.records[0] == QUERY
