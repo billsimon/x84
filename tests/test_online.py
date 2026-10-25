@@ -40,3 +40,29 @@ def test_disconnect(script, session, monkeypatch):
     x84.engine.session_recv(terminals, logging.getLogger('test'), False)
     assert killed == [(terminals[1][1].client, 'remote-disconnect by {0}'
                        .format(session.session.sid))]
+
+
+def test_sendmsg_writes_mail(script, session, engine, users, monkeypatch):
+    # [s]end msg writes private mail to the user on the chosen node.
+    import x84.bbs
+    online = script('online')
+    target = {'sid': 'telnet-10.0.0.2:5000', 'handle': u'BIFF'}
+    monkeypatch.setattr(online, 'get_node', lambda sessions: (1, target))
+    calls = []
+    monkeypatch.setattr(x84.bbs, 'gosub',
+                        lambda *args, **kwargs: calls.append((args, kwargs)))
+    assert online.sendmsg({})
+    assert calls == [(('mail',), {'write': True, 'recipient': u'biff'})]
+
+
+def test_sendmsg_not_a_user(script, session, engine, users, monkeypatch):
+    # a caller at the login prompt is not sent mail.
+    import x84.bbs
+    online = script('online')
+    target = {'sid': 'telnet-10.0.0.2:5000', 'handle': u'anonymous'}
+    monkeypatch.setattr(online, 'get_node', lambda sessions: (1, target))
+    calls = []
+    monkeypatch.setattr(x84.bbs, 'gosub',
+                        lambda *args, **kwargs: calls.append((args, kwargs)))
+    assert not online.sendmsg({})
+    assert calls == []

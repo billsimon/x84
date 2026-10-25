@@ -138,10 +138,10 @@ def do_chat(session, term, log, other_sid, dial=None, call_from=None):
     if data:
         log.debug('Flushed chat data: %r', data)
 
-    session.activity = (u'{doing} {call_from}'.format(
+    session.activity = (u'{doing} {who}'.format(
         doing=('answering call from' if answering else
                'requesting chat with'),
-        call_from=call_from))
+        who=dial or call_from))
 
     # send chat request
     if dial:
@@ -156,7 +156,7 @@ def do_chat(session, term, log, other_sid, dial=None, call_from=None):
     top_editors, bot_editors = [], []
     while True:
         if dirty:
-            who = dial if dialing else call_from
+            who = dial or call_from
             top_winsize, bot_winsize = refresh_screen(term, who)
             top_editors, bot_editors = get_editors(top_winsize, bot_winsize,
                                                    top_editors, bot_editors)
@@ -327,8 +327,8 @@ def main(*args, **kwargs):
     session, term = getsession(), getterminal()
     log = logging.getLogger(__name__)
 
-    if kwargs.get('call_from') and session.kind not in ('telnet', 'ssh'):
-        # reject chat requests unless we are a tty terminal of telnet or ssh.
+    if kwargs.get('call_from') and session.kind == 'sftp':
+        # reject chat requests to sftp sessions, which have no terminal.
         route_data = (kwargs['other_sid'], 'chat') + (REJECTED,)
         session.send_event('route', route_data)
         log.debug("Rejected chat request; session.kind=%s", session.kind)
