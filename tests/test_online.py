@@ -43,7 +43,7 @@ def test_disconnect(script, session, monkeypatch):
 
 
 def test_sendmsg_writes_mail(script, session, engine, users, monkeypatch):
-    # [s]end msg writes private mail to the user of the node chosen.
+    # [s]end msg writes private mail to the user on the chosen node.
     import x84.bbs
     online = script('online')
     target = {'sid': 'telnet-10.0.0.2:5000', 'handle': u'BIFF'}

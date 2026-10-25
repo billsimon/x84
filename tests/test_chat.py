@@ -1,4 +1,4 @@
-""" Tests of the chat script of the default board. """
+""" Tests for the default board's chat script. """
 # 3rd-party
 import pytest
 
@@ -7,7 +7,7 @@ from tests.screens import run_script
 
 
 def record_routes(session, monkeypatch):
-    """ Return list of the events that the session routes to another. """
+    """ Return a list of events the session routes to other sessions. """
     routes = []
     send_event = session.session.send_event
 
@@ -23,7 +23,7 @@ def record_routes(session, monkeypatch):
                                   'tn3270'])
 def test_chat_request_answered(script, session, engine, users, monkeypatch,
                                kind):
-    # a chat request is asked of a caller of any terminal, who may
+    # a chat request reaches a caller on any terminal, who may
     # decline it.
     session.session.kind = kind
     routes = record_routes(session, monkeypatch)
@@ -46,12 +46,12 @@ def test_chat_request_rejected_by_sftp(script, session, engine, users,
 
 def test_chat_dialing_names_the_other_user(script, session, engine, users,
                                            monkeypatch):
-    # the activity of the session dialing names whom it dials.
+    # the dialing session's activity names the user it dials.
     routes = record_routes(session, monkeypatch)
     chat = script('chat')
     run_script(engine, chat, [u'q'], dial=u'biff',
                other_sid='telnet-10.0.0.2:5000')
     assert session.session.activity == u'requesting chat with biff'
-    # the other session is sent to chat, then told of the hangup.
+    # the other session is sent to chat, then told about the hangup.
     assert routes[0][:2] == ('telnet-10.0.0.2:5000', 'gosub')
     assert routes[-1] == ('telnet-10.0.0.2:5000', 'chat', chat.HANGUP)

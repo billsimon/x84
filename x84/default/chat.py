@@ -328,7 +328,7 @@ def main(*args, **kwargs):
     log = logging.getLogger(__name__)
 
     if kwargs.get('call_from') and session.kind == 'sftp':
-        # reject chat requests of sftp sessions, which have no terminal.
+        # reject chat requests to sftp sessions, which have no terminal.
         route_data = (kwargs['other_sid'], 'chat') + (REJECTED,)
         session.send_event('route', route_data)
         log.debug("Rejected chat request; session.kind=%s", session.kind)

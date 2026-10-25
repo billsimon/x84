@@ -182,7 +182,7 @@ def disconnect(sessions):
 
 def sendmsg(sessions):
     """
-    Prompt for node and write private mail to the user of target session.
+    Prompt for node and write private mail to the user on that node.
     """
     from x84.bbs import echo, find_user, gosub
     (node, tgt_session) = get_node(sessions)
