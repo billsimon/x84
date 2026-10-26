@@ -123,8 +123,9 @@ The board's cursor is shown underscored.  At the board's login, the
 input row is labeled ``Login ===>``.  When the cursor follows a password
 prompt, or a line editor masks what is typed, it is labeled ``Password
 ===>`` and doesn't show what is typed.  The chats label it ``Message
-===>``, the oneliners ``Oneliner ===>``, and new-user signup and password
-reset name each field, such as ``Username ===>``.
+===>``, the oneliners ``Oneliner ===>``.  New-user signup, password reset,
+and writing mail or a post name each field, such as ``Username ===>`` or
+``Subject ===>``.
 
 The editor
 ----------

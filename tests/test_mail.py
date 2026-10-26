@@ -165,6 +165,22 @@ def test_write_mail(users, engine, script, monkeypatch):
     assert ('newmsg', idx) in engine.broadcasts
 
 
+def test_write_mail_labels_3270(users, engine, script, session, monkeypatch):
+    """ At a 3270, each prompt for a new mail labels the input row. """
+    session.session.env['TN3270_TOKEN'] = u'tok'
+    mail_script = script('mail')
+    gosub_editor(monkeypatch, mail_script, u'great scott')
+    output = run_mail(engine, mail_script,
+                      [u'w', u'doc\r', u'1.21 gigawatts\r', u'q'])
+    to, subject, reset = (u'\x1b]3270;tok;label;To\x07',
+                          u'\x1b]3270;tok;label;Subject\x07',
+                          u'\x1b]3270;tok;label\x07')
+    assert output.index(to) < output.index(reset, output.index(to))
+    assert output.index(subject) < output.index(reset,
+                                                output.index(subject))
+    assert output.index(to) < output.index(subject)
+
+
 def test_write_recipient_case_and_close_match(users, engine, script,
                                               monkeypatch):
     mail_script = script('mail')

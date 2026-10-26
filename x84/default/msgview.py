@@ -32,6 +32,7 @@ from x84.bbs.textbuffer import (
     wrap_offsets,
 )
 from editor import ctrl, discard_csi, displayable, fit, is_escape
+from common import declare_label
 
 #: maximum length of user handles
 username_max_length = get_ini(
@@ -380,12 +381,21 @@ class MessageScreen(object):
         return None
 
     def prompt_line(self, yloc, label, content, width):
-        """ Prompt for a line of text, returning None when canceled. """
+        """
+        Prompt for a line of text, returning None when canceled.
+
+        A 3270's input row is labeled by ``label``, as ``Subject ===>`` for
+        ``'Subject: '``.
+        """
         echo(self.term.move(yloc, 0) + self.term.normal + label +
              self.term.clear_eol)
         self.screen[yloc] = (None, None)
-        return LineEditor(width, content,
-                          colors={'highlight': self.colors['select']}).read()
+        echo(declare_label(label.strip().rstrip(u':')))
+        try:
+            return LineEditor(width, content, colors={
+                'highlight': self.colors['select']}).read()
+        finally:
+            echo(declare_label())
 
     def prompt_recipient(self, yloc, handle=u'', allow_empty=False):
         """
