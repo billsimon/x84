@@ -193,10 +193,9 @@ class LineEditor(object):
         # a 3270 shows what is typed in its input row unless told to hide it
         # (see x84.tn3270).
         session = getsession()
-        hide = bool(self.hidden) and session is not None and (
-            session.kind.startswith('tn3270'))
+        hide = bool(self.hidden) and session is not None
         if hide:
-            echo(u'\x1b]3270;input;hidden\x07')
+            echo(session.declare_3270('input', 'hidden'))
         try:
             echo(self.refresh())
             term = getterminal()
@@ -205,7 +204,7 @@ class LineEditor(object):
                 echo(self.process_keystroke(inp))
         finally:
             if hide:
-                echo(u'\x1b]3270;input\x07')
+                echo(session.declare_3270('input'))
         echo(self._term.normal)
         if not self.quit:
             return self.content

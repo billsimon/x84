@@ -214,6 +214,7 @@ def test_escape_combined_with_control_key(session, editor):
 def run_fields(session, editor, events, kind='tn3270', **kwargs):
     """ Run the editor of a 3270 terminal, given ``events`` of its keys. """
     session.session.kind = kind
+    session.session.env['TN3270_TOKEN'] = u'tok'
     sender = threading.Thread(target=lambda: [
         session.send('tn3270', dict(dict(text=u'', fields={}, cursor=None),
                                     **event)) for event in events])
@@ -235,8 +236,8 @@ def test_fields_of_3270(session, editor, kind):
     result, output = run_fields(session, editor, events, kind=kind)
     assert result == u'hello\r\nworld'
     # rows 1-22 are input fields, until the editor exits.
-    assert output.index(u'\x1b]3270;fields;1;22\x07') < output.index(
-        u'\x1b]3270;fields\x07')
+    assert output.index(u'\x1b]3270;tok;fields;1;22\x07') < output.index(
+        u'\x1b]3270;tok;fields\x07')
     assert u'PF3 Menu' in output
 
 

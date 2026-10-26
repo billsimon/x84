@@ -47,9 +47,10 @@ class Chosen(Exception):
 def test_label_declared_only_at_3270(script, session):
     common = script('common')
     assert common.declare_label(u'Message') == u''
-    session.session.kind = 'tn3270'
-    assert common.declare_label(u'Message') == u'\x1b]3270;label;Message\x07'
-    assert common.declare_label() == u'\x1b]3270;label\x07'
+    session.session.env['TN3270_TOKEN'] = u'tok'
+    assert common.declare_label(u'Message') == (
+        u'\x1b]3270;tok;label;Message\x07')
+    assert common.declare_label() == u'\x1b]3270;tok;label\x07'
 
 
 def test_main_menu_type_ahead(users, engine, script, session, monkeypatch):

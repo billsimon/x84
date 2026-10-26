@@ -122,14 +122,14 @@ def is_escape(term, inp):
 
 def declare_fields(top=None, bottom=None):
     """
-    Return sequence making rows ``top`` to ``bottom`` input fields.
+    Return a sequence making rows ``top`` to ``bottom`` input fields.
 
-    Only for a 3270 terminal, see x84.tn3270; without arguments, no rows
+    Only for a 3270 terminal, see x84.tn3270; with no arguments, no rows
     are input fields.
     """
     if top is None:
-        return u'\x1b]3270;fields\x07'
-    return u'\x1b]3270;fields;{0};{1}\x07'.format(top, bottom)
+        return getsession().declare_3270('fields')
+    return getsession().declare_3270('fields', str(top), str(bottom))
 
 
 def discard_csi(term):

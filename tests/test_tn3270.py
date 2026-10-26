@@ -387,6 +387,11 @@ def send_record(sock, record):
                  bytes((IAC, EOR_MARK)))
 
 
+def declare(client, params):
+    """ Return a sequence declaring ``params`` to ``client``, as the bbs does. """
+    return u'\x1b]3270;{0};{1}\x07'.format(client.token, params)
+
+
 @pytest.fixture
 def pair(cfg):
     """ A TN3270Client, set up as a 24x80 color terminal, and its socket. """
@@ -621,7 +626,7 @@ def test_input_fields(pair):
     client, sock = pair
     display = Display()
     client.send_unicode(u'\x1b[2J\x1b[H Title\r\nfirst row\r\nsecond')
-    client.send_unicode(u'\x1b]3270;fields;1;3\x07\x1b[3;7H')
+    client.send_unicode(declare(client, u'fields;1;3') + u'\x1b[3;7H')
     draw(client, sock, display)
     # each row's field begins by an attribute at the end of the row above.
     for row in (1, 2, 3):
@@ -652,7 +657,7 @@ def test_input_fields(pair):
     assert not client.help_pending
     settle(client, sock)
     # no longer.
-    client.send_unicode(u'\x1b]3270;fields\x07')
+    client.send_unicode(declare(client, u'fields'))
     draw(client, sock, display)
     assert set(display.fields) == {23 * 80, client.input_addr - 1,
                                    client.display_addr}
@@ -742,7 +747,7 @@ def test_declared_label(pair):
         for record in read_records(sock, timeout=0.3):
             display.write(record)
     client.repaint_pending = True
-    update(u'\x1b]3270;label;Message\x07')
+    update(declare(client, u'label;Message'))
     assert display.line(23).startswith(u' Message ===> ')
     # it stays as the bbs draws, even at a login prompt,
     update(u'chatting\r\n:: Login: ')
@@ -753,9 +758,9 @@ def test_declared_label(pair):
     update(u'\r\n')
     assert display.line(23).startswith(u' Message ===> ')
     # cut to the columns it is given.
-    update(u'\x1b]3270;label;Discussion\x07')
+    update(declare(client, u'label;Discussion'))
     assert display.line(23).startswith(u' Discussi ===> ')
-    update(u'\x1b]3270;label\x07')
+    update(declare(client, u'label'))
     assert display.line(23).startswith(u' Command ===> ')
 
 
@@ -772,14 +777,34 @@ def test_declared_hidden(pair):
             display.write(record)
     client.repaint_pending = True
     # a prompt that doesn't mention a password, as when typing it again.
-    update(u'\x1b]3270;label;Again\x07:: Again: \x1b]3270;input;hidden\x07')
+    update(declare(client, u'label;Again') + u':: Again: ' +
+           declare(client, u'input;hidden'))
     assert display.line(23).startswith(u' Password ===> ')
     field = display.fields[client.input_addr - 1]
     assert field[0xC0] == encode_attr(FA_NONDISPLAY)
-    update(u'\x1b]3270;input\x07')
+    update(declare(client, u'input'))
     assert display.line(23).startswith(u' Again ===> ')
     field = display.fields[client.input_addr - 1]
     assert field[0xC0] & 0x0C != FA_NONDISPLAY
+
+
+def test_forged_declaration_ignored(pair):
+    """ Only declarations beginning with the session's token are obeyed. """
+    client, sock = pair
+    display = Display()
+    client.repaint_pending = True
+    draw(client, sock, display)
+    for token in (u'', u'0' * len(client.token)):
+        client.send_unicode(u'\x1b]3270;{0};fields;1;3\x07'.format(token))
+        client.send_unicode(u'\x1b]3270;{0};label;Evil\x07'.format(token))
+    client.send_unicode(u'\x1b]3270;fields;1;3\x07\x1b]3270;input;hidden\x07')
+    client.send_unicode(u'shown')
+    time.sleep(client.RENDER_IDLE)
+    draw(client, sock, display)
+    assert client.fields is None
+    assert display.line(23).startswith(u' Command ===> ')
+    assert display.line(0).startswith(u'shown')
+    assert not client.hidden_input
 
 
 def test_input_field_ends(pair):

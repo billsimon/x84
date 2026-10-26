@@ -258,18 +258,18 @@ def test_script_resets_3270_label(session, tmp_path):
     import types
     from x84.bbs.script_def import Script
     (tmp_path / 'labeled.py').write_text(
-        'from x84.bbs import echo\n'
+        'from x84.bbs import echo, getsession\n'
         'def main(fail=False):\n'
-        '    echo(u"\\x1b]3270;label;Message\\x07")\n'
+        '    echo(getsession().declare_3270("label", "Message"))\n'
         '    if fail:\n'
         '        raise ValueError("chat failed")\n')
     sess = session.session
     sess._script_module = [types.SimpleNamespace(__path__=[str(tmp_path)])]
-    reset = u'\x1b]3270;label\x07\x1b]3270;input\x07'
+    reset = u'\x1b]3270;tok;label\x07\x1b]3270;tok;input\x07'
     # only for a 3270.
     sess.runscript(Script('labeled', (), {}))
     assert reset not in session.output()
-    sess.kind = 'tn3270'
+    sess.env['TN3270_TOKEN'] = u'tok'
     sess.runscript(Script('labeled', (), {}))
     assert session.output().endswith(reset)
     with pytest.raises(ValueError):

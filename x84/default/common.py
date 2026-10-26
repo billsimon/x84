@@ -175,11 +175,9 @@ def declare_label(label=None):
     string for other terminals (see x84.tn3270).  The label is reset when a
     script returns, so after a gosub a script declares it again.
     """
-    if not getsession().kind.startswith('tn3270'):
-        return u''
     if label is None:
-        return u'\x1b]3270;label\x07'
-    return u'\x1b]3270;label;{0}\x07'.format(label)
+        return getsession().declare_3270('label')
+    return getsession().declare_3270('label', label)
 
 
 def read_menu_input(editor, entries):

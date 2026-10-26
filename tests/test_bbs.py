@@ -90,15 +90,15 @@ def test_line_editor_hidden_at_3270(session):
     session.keys(u'pw\r')
     assert LineEditor(10, hidden=u'x').read() == u'pw'
     assert u'\x1b]3270' not in session.output()
-    session.session.kind = 'tn3270'
+    session.session.env['TN3270_TOKEN'] = u'tok'
     session.keys(u'pw\r')
     assert LineEditor(10).read() == u'pw'
     assert u'\x1b]3270' not in session.output()
     session.keys(u'pw\r')
     assert LineEditor(10, hidden=u'x').read() == u'pw'
     output = session.output()
-    assert output.startswith(u'\x1b]3270;input;hidden\x07')
-    assert u'\x1b]3270;input\x07' in output
+    assert output.startswith(u'\x1b]3270;tok;input;hidden\x07')
+    assert u'\x1b]3270;tok;input\x07' in output
     assert u'pw' not in output
 
 

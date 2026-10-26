@@ -65,6 +65,7 @@ import itertools
 import logging
 import os
 import re
+import secrets
 import select
 import ssl
 import threading
@@ -241,11 +242,11 @@ SUBSTITUTES = {
     u'”': u'"', u'…': u'.',
 }
 
-#: scripts send declarations to the server in this sequence (see
-#: :meth:`TN3270Client.declare`): rows of input fields, ``fields;top;bottom``
-#: or ``fields`` for none; the input row's label, ``label;name`` or
-#: ``label`` for the default; and whether what is typed there is hidden,
-#: ``input;hidden`` or ``input``.
+#: scripts send declarations to the server in this sequence, beginning with
+#: the session's token, ``TN3270_TOKEN`` in its environment, so that text
+#: the bbs only passes along, such as a message or a door's output, can't
+#: forge one: ``token;fields;top;bottom``, for example.  See
+#: :meth:`TN3270Client.declare`.
 DECLARE = u'\x1b]3270;'
 RE_DECLARE = re.compile(u'\x1b\\]3270;([^\x07\x1b]*)(?:\x07|\x1b\\\\)')
 
@@ -785,6 +786,9 @@ class TN3270Client(BaseClient):
 
     def __init__(self, sock, address_pair, on_naws=None):
         super(TN3270Client, self).__init__(sock, address_pair, on_naws)
+        #: secret that begins each declaration by the bbs, given to the
+        #: session as ``TN3270_TOKEN``.
+        self.token = secrets.token_hex(16)
         #: terminal type, once negotiated.
         self.ttype = None
         #: options that the terminal has agreed to, and that it refused.
@@ -1118,7 +1122,8 @@ class TN3270Client(BaseClient):
         """
         Receive a declaration from the bbs.
 
-        ``params`` are one of:
+        ``params`` begin with :attr:`token`, and a declaration without it
+        is ignored.  The rest are one of:
 
         - ``'fields;top;bottom'``: rows ``top`` to ``bottom`` are input
           fields; ``'fields'``: no rows are.
@@ -1128,6 +1133,9 @@ class TN3270Client(BaseClient):
           password; ``'input'``: show it, unless the prompt asks for a
           password (see :meth:`is_password_prompt`).
         """
+        token, _, params = params.partition(u';')
+        if not secrets.compare_digest(token, self.token):
+            return
         if params == u'label' or params.startswith(u'label;'):
             name = params[len(u'label;'):].strip()[:LABEL_WIDTH].rstrip()
             self.declared_label = (name + PROMPT_ARROW) if name else None
@@ -1780,6 +1788,7 @@ class ConnectTN3270(BaseConnect):
         env['LINES'] = str(rows - 1)
         env['COLUMNS'] = str(columns)
         env['TN3270_TTYPE'] = client.ttype
+        env['TN3270_TOKEN'] = client.token
         client.help_pending = 'logon'
         client.draw()
         self.flush()
