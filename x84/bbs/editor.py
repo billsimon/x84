@@ -12,7 +12,7 @@ import copy
 
 # local
 from x84.bbs.ansiwin import AnsiWindow, GLYPHSETS
-from x84.bbs.session import getterminal
+from x84.bbs.session import getsession, getterminal
 from x84.bbs.output import echo
 
 #: default command-key mapping.
@@ -190,11 +190,22 @@ class LineEditor(object):
         """
         self._carriage_returned = False
         self._quit = False
-        echo(self.refresh())
-        term = getterminal()
-        while not (self.quit or self.carriage_returned):
-            inp = term.inkey()
-            echo(self.process_keystroke(inp))
+        # a 3270 shows what is typed in its input row unless told to hide it
+        # (see x84.tn3270).
+        session = getsession()
+        hide = bool(self.hidden) and session is not None and (
+            session.kind.startswith('tn3270'))
+        if hide:
+            echo(u'\x1b]3270;input;hidden\x07')
+        try:
+            echo(self.refresh())
+            term = getterminal()
+            while not (self.quit or self.carriage_returned):
+                inp = term.inkey()
+                echo(self.process_keystroke(inp))
+        finally:
+            if hide:
+                echo(u'\x1b]3270;input\x07')
         echo(self._term.normal)
         if not self.quit:
             return self.content

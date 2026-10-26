@@ -48,6 +48,7 @@ import zlib
 from x84.bbs import getsession, getterminal, echo, get_ini, syncterm_setfont
 from x84.bbs.textbuffer import char_width, text_width, wrap_offsets
 from editor import ctrl, is_escape
+from common import declare_label
 
 # 3rd party
 import irc.client
@@ -1410,6 +1411,7 @@ def main():
     screen = ChatScreen(term, session.encoding)
     chat = IRCChat(term, session, screen)
     screen.redraw()
+    echo(declare_label(u'Message'))
     try:
         if chat.connect(session.user.handle):
             chat.run()

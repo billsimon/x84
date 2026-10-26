@@ -253,6 +253,30 @@ def test_chat_script_holds_idle_timeout(session, tmp_path):
     assert events() == [True, False]
 
 
+def test_script_resets_3270_label(session, tmp_path):
+    """ A 3270's input row label is reset when a script returns. """
+    import types
+    from x84.bbs.script_def import Script
+    (tmp_path / 'labeled.py').write_text(
+        'from x84.bbs import echo\n'
+        'def main(fail=False):\n'
+        '    echo(u"\\x1b]3270;label;Message\\x07")\n'
+        '    if fail:\n'
+        '        raise ValueError("chat failed")\n')
+    sess = session.session
+    sess._script_module = [types.SimpleNamespace(__path__=[str(tmp_path)])]
+    reset = u'\x1b]3270;label\x07\x1b]3270;input\x07'
+    # only for a 3270.
+    sess.runscript(Script('labeled', (), {}))
+    assert reset not in session.output()
+    sess.kind = 'tn3270'
+    sess.runscript(Script('labeled', (), {}))
+    assert session.output().endswith(reset)
+    with pytest.raises(ValueError):
+        sess.runscript(Script('labeled', (), {'fail': True}))
+    assert session.output().endswith(reset)
+
+
 def test_engine_holds_idle_timeout(cfg, monkeypatch):
     """ No session times out while held; idle time counts from release. """
     import logging

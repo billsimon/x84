@@ -9,13 +9,14 @@ so this server keeps a virtual ANSI terminal (by pyte_) for each session,
 and draws its screen on the 3270, its colors and characters translated to
 those of the 3270 and its EBCDIC code page.
 
-A logon screen, as of VTAM, is displayed on connecting.  The bottom row of
-the 3270 is a field for typing, after ``Command ===>`` as of ISPF, and the
-bbs is given the rows above it.  What is typed there is sent to the bbs by
-ENTER, followed by Return, or by a PF key, followed by the key that the PF
-key stands for (see :data:`PF_KEYS`), as ISPF names them: PF3 END and PF12
-CANCEL are Escape, PF7 UP and PF8 DOWN are Page Up and Page Down, and PF4
-sends only what was typed.  PF1 HELP and PA1 display a page describing
+A logon screen like VTAM's is displayed on connecting.  The bottom row of
+the 3270 is a field for typing, labeled ``Command ===>`` as in ISPF, or
+with a label the bbs declares, such as ``Message ===>``; the bbs is given
+the rows above it.  What is typed there is sent to the bbs by ENTER, followed
+by Return, or by a PF key, followed by the key that the PF key stands for
+(see :data:`PF_KEYS`), as ISPF names them: PF3 END and PF12 CANCEL are
+Escape, PF7 UP and PF8 DOWN are Page Up and Page Down, and PF4 sends only
+what was typed.  PF1 HELP and PA1 display a page describing
 them; CLEAR and PA2 draw the screen again.
 
 To enable, add to default.ini::
@@ -188,6 +189,11 @@ PROMPT_LOGIN = u'Login ===>'
 PROMPT_PASSWORD = u'Password ===>'
 PROMPT_WIDTH = max(len(PROMPT), len(PROMPT_LOGIN), len(PROMPT_PASSWORD))
 
+#: a label declared by the bbs, such as ``Message``, is followed by this,
+#: and is cut to the columns left for it.
+PROMPT_ARROW = u' ===>'
+LABEL_WIDTH = PROMPT_WIDTH - len(PROMPT_ARROW)
+
 #: a prompt of a login, ending the text left of the bbs's cursor.
 RE_LOGIN = re.compile(r'login:\s*$', re.IGNORECASE)
 
@@ -235,9 +241,11 @@ SUBSTITUTES = {
     u'”': u'"', u'…': u'.',
 }
 
-#: scripts declare rows of input fields by this sequence: ``fields;top;bottom``
-#: of the first and last rows, or ``fields`` of none.  See
-#: :meth:`TN3270Client.declare`.
+#: scripts send declarations to the server in this sequence (see
+#: :meth:`TN3270Client.declare`): rows of input fields, ``fields;top;bottom``
+#: or ``fields`` for none; the input row's label, ``label;name`` or
+#: ``label`` for the default; and whether what is typed there is hidden,
+#: ``input;hidden`` or ``input``.
 DECLARE = u'\x1b]3270;'
 RE_DECLARE = re.compile(u'\x1b\\]3270;([^\x07\x1b]*)(?:\x07|\x1b\\\\)')
 
@@ -806,6 +814,10 @@ class TN3270Client(BaseClient):
         self.output_time = self.dirty_time = None
         #: first and last rows of input fields, declared by the bbs.
         self.fields = None
+        #: input row label declared by the bbs, or None.
+        self.declared_label = None
+        #: whether the bbs declared what is typed in the input row hidden.
+        self.declared_hidden = False
         #: name of this terminal, as of a logical unit of VTAM.
         self.terminal_id = u'X84T{0:04d}'.format(next(TERMINAL_NUMBERS))
         #: time of an attention key, until the bbs has answered it.
@@ -965,8 +977,15 @@ class TN3270Client(BaseClient):
 
     @property
     def display_addr(self):
-        """ Buffer position of the attribute of the bbs display. """
-        return self.rows * self.columns - 1
+        """
+        Buffer position of the bbs display's field attribute.
+
+        It ends the input field, one cell short of the end of the screen,
+        and is protected but not skipped: typing past the end of the input
+        field stops at that last cell, rather than skipping to the next
+        unprotected field, which is the input field itself, at its start.
+        """
+        return self.rows * self.columns - 2
 
     @property
     def extended(self):
@@ -1029,13 +1048,16 @@ class TN3270Client(BaseClient):
 
     def prompt_label(self, password):
         """
-        Return the label of the input row, as of the bbs's prompt.
+        Return the input row's label, for the bbs's prompt.
 
-        ``Login ===>`` and ``Password ===>`` at the prompts of a login and
-        of a password (``password``), and ``Command ===>`` otherwise.
+        ``Password ===>`` when the input is hidden (``password``); otherwise
+        the label the bbs declared, if any; otherwise ``Login ===>`` at a
+        login prompt, or ``Command ===>``.
         """
         if password:
             return PROMPT_PASSWORD
+        if self.declared_label:
+            return self.declared_label
         if RE_LOGIN.search(self.prompt_text()):
             return PROMPT_LOGIN
         return PROMPT
@@ -1094,11 +1116,25 @@ class TN3270Client(BaseClient):
 
     def declare(self, params):
         """
-        Receive a declaration of input fields by the bbs.
+        Receive a declaration from the bbs.
 
-        ``params`` are ``'fields;top;bottom'``, the first and last rows of
-        input fields, or ``'fields'``, of none.
+        ``params`` are one of:
+
+        - ``'fields;top;bottom'``: rows ``top`` to ``bottom`` are input
+          fields; ``'fields'``: no rows are.
+        - ``'label;name'``: label the input row ``name ===>``; ``'label'``:
+          restore the default (see :meth:`prompt_label`).
+        - ``'input;hidden'``: hide what is typed in the input row, as for a
+          password; ``'input'``: show it, unless the prompt asks for a
+          password (see :meth:`is_password_prompt`).
         """
+        if params == u'label' or params.startswith(u'label;'):
+            name = params[len(u'label;'):].strip()[:LABEL_WIDTH].rstrip()
+            self.declared_label = (name + PROMPT_ARROW) if name else None
+            return
+        if params in (u'input', u'input;hidden'):
+            self.declared_hidden = params == u'input;hidden'
+            return
         args = params.split(u';')
         fields = None
         if args[0] == u'fields' and len(args) == 3:
@@ -1354,7 +1390,7 @@ class TN3270Client(BaseClient):
                 row * self.columns - 1) + self.edit_field()
         else:
             prefix = bytes((ORDER_SBA,)) + encode_address(
-                self.display_addr) + self.field(FA_SKIP)
+                self.display_addr) + self.field(FA_PROTECTED)
         return prefix + encode_cells(
             cells, row * self.columns, self.row_end(row),
                             fill=0x00 if row in self.field_rows else 0x40,
@@ -1369,8 +1405,12 @@ class TN3270Client(BaseClient):
             min(screen.cursor.x, self.columns)))
 
     def is_password_prompt(self):
-        """ Whether the bbs's cursor follows a prompt of a password. """
-        return u'pass' in self.prompt_text().lower()
+        """
+        Whether the bbs's cursor follows a password prompt, or the bbs
+        declared the input hidden.
+        """
+        return (self.declared_hidden or
+                u'pass' in self.prompt_text().lower())
 
     def _begin_write(self, command, wcc):
         """ Return the beginning of a write command, and reset flags. """
@@ -1403,7 +1443,7 @@ class TN3270Client(BaseClient):
         out += self.label_text()
         out += self.input_field()
         out += bytes((ORDER_SBA,)) + encode_address(self.display_addr)
-        out += self.field(FA_SKIP)
+        out += self.field(FA_PROTECTED)
         for row in self.field_rows:
             out += bytes((ORDER_SBA,)) + encode_address(
                 row * self.columns - 1)
@@ -1497,12 +1537,14 @@ class TN3270Client(BaseClient):
         lines = ([(COLORS['yellow'], u'{0} - TN3270 KEYS'.format(bbsname)),
                   (None, u'')] +
                  [(COLORS['cyan'], line) for line in (
-                     u'TYPE AFTER COMMAND ===> AND PRESS ENTER.  OR MOVE THE '
-                     u'CURSOR TO',
+                     u'TYPE AFTER ===> AT THE BOTTOM AND PRESS ENTER.  OR '
+                     u'MOVE THE CURSOR TO',
                      u'A CHOICE OF A MENU OR LIST, OR A KEY NAMED AT THE '
                      u'BOTTOM OF A',
                      u'SCREEN, AND PRESS ENTER.  TYPE IN THE WINDOW OF THE '
-                     u'EDITOR.')] +
+                     u'EDITOR.',
+                     u'TYPING PAST THE END OF A FIELD LOCKS THE KEYBOARD: '
+                     u'PRESS RESET.')] +
                  [(None, u'')] +
                  [(COLORS['green'], line) for line in self.key_lines()] +
                  [(None, u''), (COLORS['white'], u'PRESS ENTER TO RETURN.')])

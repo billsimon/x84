@@ -8,6 +8,7 @@ import math
 from x84.bbs import echo, getsession, getterminal, syncterm_setfont, showart
 from x84.bbs import ScrollingEditor, get_ini
 from x84.bbs.session import Script
+from common import declare_label
 
 # 3rd-party
 from blessed.keyboard import Keystroke
@@ -171,6 +172,7 @@ def do_chat(session, term, log, other_sid, dial=None, call_from=None):
                 echo(editor.refresh())
 
             echo(top_editors[top_idx].fixate())
+            echo(declare_label(None if dialing or answering else u'Message'))
             if dialing:
                 display_dialing(term, pos=bot_winsize, who=who)
             if answering:

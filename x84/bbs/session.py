@@ -785,7 +785,14 @@ class Session(object):
         # the engine's idle timeout while it runs: its users read others'
         # messages without typing.
         with self._timeout_held(not getattr(module, 'IDLE_TIMEOUT', True)):
-            value = module.main(*script.args, **script.kwargs)
+            try:
+                value = module.main(*script.args, **script.kwargs)
+            finally:
+                if self.kind.startswith('tn3270'):
+                    # a 3270's input row label (see common.declare_label)
+                    # and hidden input belong to the script that declared
+                    # them.
+                    self.write(u'\x1b]3270;label\x07\x1b]3270;input\x07')
 
         # remove the current script from the script stack, since it has
         # finished executing.

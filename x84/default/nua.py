@@ -13,7 +13,7 @@ import re
 # local
 from x84.bbs import getsession, getterminal, echo, LineEditor
 from x84.bbs import goto, get_ini, find_user, User, syncterm_setfont
-from common import display_banner, show_description
+from common import display_banner, show_description, declare_label
 
 log = logging.getLogger(__name__)
 here = os.path.dirname(__file__)
@@ -233,7 +233,11 @@ def prompt_input(term, key, **kwargs):
     sep_ok = getattr(term, color_primary)(u'::')
     colors = {'highlight': getattr(term, color_primary)}
     echo(u'{sep} {key:>18}: '.format(sep=sep_ok, key=key))
-    entry = LineEditor(colors=colors, **kwargs).read()
+    echo(declare_label(key.split()[0]))
+    try:
+        entry = LineEditor(colors=colors, **kwargs).read()
+    finally:
+        echo(declare_label())
     if entry is None:
         log.debug('New User Account canceled at prompt key={0}.'.format(key))
     return entry
