@@ -2,6 +2,9 @@
 # std imports
 import time
 
+# 3rd-party
+import pytest
+
 # local
 from x84.bbs.dbproxy import DBProxy
 from x84.bbs.msgbase import MSGDB, Msg, get_msg, list_msgs
@@ -270,10 +273,11 @@ def test_subscription_of_another_user(users, engine, script, session):
     assert session.session.user.get('msg_subscription') is None
 
 
-def test_clicks_of_3270(users, engine, script, session):
+@pytest.mark.parametrize('kind', ['tn3270', 'tn3270-tls'])
+def test_clicks_of_3270(users, engine, script, session, kind):
     # at a 3270, ENTER is a click of the mouse where the cursor is: a
     # message clicked is read, and hints of the bars are their keys.
-    session.session.kind = 'tn3270'
+    session.session.kind = kind
     # as answered by the tn3270 server, to queries of mouse modes, which
     # are supported and not enabled (see test_integration.py).
     session.session.terminal._dec_mode_cache.update({1000: 2, 1006: 2})

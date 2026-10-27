@@ -211,9 +211,9 @@ def test_escape_combined_with_control_key(session, editor):
     assert result == u'text'
 
 
-def run_fields(session, editor, events, **kwargs):
+def run_fields(session, editor, events, kind='tn3270', **kwargs):
     """ Run the editor of a 3270 terminal, given ``events`` of its keys. """
-    session.session.kind = 'tn3270'
+    session.session.kind = kind
     sender = threading.Thread(target=lambda: [
         session.send('tn3270', dict(dict(text=u'', fields={}, cursor=None),
                                     **event)) for event in events])
@@ -224,14 +224,15 @@ def run_fields(session, editor, events, **kwargs):
         sender.join()
 
 
-def test_fields_of_3270(session, editor):
+@pytest.mark.parametrize('kind', ['tn3270', 'tn3270-tls'])
+def test_fields_of_3270(session, editor, kind):
     # rows of text typed over at a 3270, and the menu by PF3.
     events = [
         dict(aid='enter', fields={1: u'hello'}, cursor=(1, 5)),
         dict(aid='pf3', fields={2: u'world'}, cursor=(2, 5)),
         dict(aid='enter', text=u's'),
     ]
-    result, output = run_fields(session, editor, events)
+    result, output = run_fields(session, editor, events, kind=kind)
     assert result == u'hello\r\nworld'
     # rows 1-22 are input fields, until the editor exits.
     assert output.index(u'\x1b]3270;fields;1;22\x07') < output.index(

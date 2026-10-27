@@ -88,7 +88,7 @@ class BaseClient(object):
 
     def send(self):
         """
-        Send any data buffered and return number of bytes send.
+        Send any data buffered and return number of bytes sent.
 
         :raises Disconnected: client has disconnected (cannot write to socket).
         """
@@ -100,28 +100,28 @@ class BaseClient(object):
             ready_bytes = bytes(self.send_buffer)
             self.send_buffer = bytearray()
 
-        def _send(send_bytes):
-            """
-            Inner low-level function for socket send.
-
-            :raises Disconnected: on sock.send error.
-            """
-            try:
-                return self.sock.send(send_bytes)
-            except OSError as err:
-                if err.errno in (errno.EDEADLK, errno.EAGAIN):
-                    self.log.debug('{self.addrport}: {err} (bandwidth exceed)'
-                                   .format(self=self, err=err))
-                    return 0
-                raise Disconnected('send: {0}'.format(err))
-
-        sent = _send(ready_bytes)
+        sent = self._sock_send(ready_bytes)
         if sent < len(ready_bytes):
             # re-buffer data that could not be pushed to socket, in front
             # of any data that may have been buffered meanwhile.
             with self._send_lock:
                 self.send_buffer[0:0] = ready_bytes[sent:]
         return sent
+
+    def _sock_send(self, send_bytes):
+        """
+        Low-level socket send, returning the number of bytes sent.
+
+        :raises Disconnected: on sock.send error.
+        """
+        try:
+            return self.sock.send(send_bytes)
+        except OSError as err:
+            if err.errno in (errno.EDEADLK, errno.EAGAIN):
+                self.log.debug('{self.addrport}: {err} (bandwidth exceed)'
+                               .format(self=self, err=err))
+                return 0
+            raise Disconnected('send: {0}'.format(err))
 
     def send_ready(self):
         """ Whether any data is buffered for delivery. """

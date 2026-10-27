@@ -265,7 +265,7 @@ class MessageScreen(object):
 
     def page_hints(self):
         """ Return hints of the keys paging, at a 3270 terminal. """
-        if self.session.kind != 'tn3270':
+        if not self.session.kind.startswith('tn3270'):
             return []
         return [u'PF7 Up', u'PF8 Down']
 
@@ -318,7 +318,7 @@ class MessageScreen(object):
         Only for 3270 terminals, whose cursor, by ENTER, is the mouse (see
         x84.tn3270), for now: clicks are handled by :meth:`clicked`.
         """
-        if self.session.kind != 'tn3270':
+        if not self.session.kind.startswith('tn3270'):
             yield
             return
         with self.term.mouse_enabled():

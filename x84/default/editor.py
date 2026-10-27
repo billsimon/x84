@@ -163,7 +163,7 @@ class Editor(object):
         self.screen = {}
         #: whether rows of text are input fields of a 3270 terminal, and
         #: the rows declared so.
-        self.fields = self.session.kind == 'tn3270'
+        self.fields = self.session.kind.startswith('tn3270')
         self.declared = None
         self.width = self.height = 0
         self.layout()

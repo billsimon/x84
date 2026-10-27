@@ -150,8 +150,11 @@ def get_servers(CFG):
     if server_enabled(CFG, 'tn3270'):
         # start tn3270 server instance, for 3270 terminals.  Requires pyte,
         # of the 'tn3270' extra.
-        from x84.tn3270 import TN3270Server
+        from x84.tn3270 import TN3270Server, TN3270TLSServer
         servers.append(TN3270Server(config=CFG))
+        if CFG.get('tn3270', 'tls_port', fallback=''):
+            # and one for tls, on its own port.
+            servers.append(TN3270TLSServer(config=CFG))
     return servers
 
 
@@ -211,8 +214,13 @@ def accept(log, server, check_ban):
             return
 
         # instantiate a client of this type
-        client = server.client_factory(sock, address_pair,
-                                       **client_factory_kwargs)
+        try:
+            client = server.client_factory(sock, address_pair,
+                                           **client_factory_kwargs)
+        except OSError:
+            # such as by wrapping it for tls: logged below.
+            sock.close()
+            raise
 
         # spawn on-connect negotiation thread.  When successful,
         # a new sub-process is spawned and registered as a session tty.

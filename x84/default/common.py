@@ -120,7 +120,7 @@ def locate_menu_entries(term, top_margin, menu_items,
 
     :returns: list of ``(row, first column, last column, menu_item)``.
     """
-    if getsession().kind != 'tn3270':
+    if not getsession().kind.startswith('tn3270'):
         return []
     row, _ = term.get_location(timeout=1)
     if row < 0:
@@ -139,7 +139,7 @@ def menu_clicks(term):
     Only at a 3270 terminal, whose cursor, by ENTER, is the mouse (see
     x84.tn3270), for now.  Clicks are keystrokes of :func:`clicked_entry`.
     """
-    if getsession().kind != 'tn3270':
+    if not getsession().kind.startswith('tn3270'):
         yield
         return
     with term.mouse_enabled():
