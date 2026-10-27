@@ -57,7 +57,7 @@ def test_global_broadcast_is_named_event(session):
 
 
 def test_info_names_kind(session):
-    # who's online shows the kind of each session's connection.
+    # a session's info includes its kind, such as 'tn3270-tls'.
     session.session._node = 1
     assert session.session.to_dict()['kind'] == 'test'
 

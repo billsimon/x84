@@ -18,9 +18,8 @@ def get_ssl_context(cert, key, chain=None):
     try:
         context.load_cert_chain(certfile=cert, keyfile=key)
     except (OSError, ssl.SSLError) as err:
-        # wrap exception to contain filepath to 'cert' and 'key' files,
-        # which will hopefully help the user better understand what
-        # otherwise be very obscure.
+        # name the 'cert' and 'key' files in the exception, which would
+        # otherwise be hard to understand.
         raise ValueError('Exception loading ssl certificate file {0!r} '
                          'and key file {1!r}: {2}'.format(cert, key, err))
     if chain is not None:

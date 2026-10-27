@@ -60,7 +60,7 @@
     screen, the command line and PF keys are as of VTAM and ISPF.
   - enhancement: 3270 terminals may connect by TLS on a separate port, set
     by 'tls_port' in section [tn3270] along with 'cert' and 'key'.  Their
-    sessions are of kind 'tn3270-tls'.
+    sessions' kind is 'tn3270-tls'.
   - enhancement: web modules 'online', listing the users logged in and their
     activity, and 'automsg', listing the goodbye messages said at logoff.
     Sessions report their handle and activity to the engine for them.

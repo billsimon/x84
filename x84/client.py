@@ -89,7 +89,7 @@ class BaseClient(object):
 
     def send(self):
         """
-        Send any data buffered and return number of bytes send.
+        Send any data buffered and return number of bytes sent.
 
         :raises Disconnected: client has disconnected (cannot write to socket).
         """
@@ -110,9 +110,9 @@ class BaseClient(object):
             try:
                 return self.sock.send(send_bytes)
             except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
-                # a tls socket that cannot send now.  It keeps track of
-                # what it already sent of this data, which is re-buffered
-                # below and so passed to it again, and sends the rest then.
+                # a tls socket that can't send yet.  It remembers how much
+                # of this data it already encrypted, so the data goes back
+                # into the buffer below and is passed to it again later.
                 return 0
             except OSError as err:
                 if err.errno in (errno.EDEADLK, errno.EAGAIN):

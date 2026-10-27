@@ -1279,7 +1279,7 @@ class TN3270Client(BaseClient):
 
     def send(self):
         """
-        Send any data buffered and return number of bytes send.
+        Send any data buffered and return number of bytes sent.
 
         The screen of the bbs is drawn first, when it has changed.
 
@@ -1594,7 +1594,7 @@ class TN3270TLSClient(TN3270Client):
 
     def send(self):
         """
-        Send any data buffered and return number of bytes send.
+        Send any data buffered and return number of bytes sent.
 
         :raises Disconnected: client has disconnected (cannot write to socket).
         """

@@ -146,7 +146,7 @@ class SshClient(BaseClient):
 
     def send(self):
         """
-        Send any data buffered and return number of bytes send.
+        Send any data buffered and return number of bytes sent.
 
         :raises Disconnected: client has disconnected (cannot write to socket).
         """

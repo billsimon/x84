@@ -450,7 +450,7 @@ class S3270(object):
 
 
 @pytest.mark.skipif(not shutil.which('s3270'),
-                    reason='s3270, of the x3270 family, is not installed')
+                    reason='s3270 (x3270 family) is not installed')
 def test_tn3270_login(server):
     """ A 3270 terminal logs in, posts a message, and reads it. """
     signup(server['telnet'], u'ibm', u'pass1234').close()
@@ -514,7 +514,7 @@ def test_tn3270_login(server):
 
 
 @pytest.mark.skipif(not shutil.which('s3270'),
-                    reason='s3270, of the x3270 family, is not installed')
+                    reason='s3270 (x3270 family) is not installed')
 def test_tn3270_tls(server, tls_cert):
     """ A 3270 terminal connects by TLS, verifying the certificate. """
     term = S3270(server['tn3270_tls'], tls_ca=tls_cert[0])
@@ -538,4 +538,3 @@ def test_sigterm_shutdown(server):
     screen.read(2)
     assert screen.eof
     assert u'server shutdown' in server['log']()
-

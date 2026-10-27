@@ -824,8 +824,8 @@ class FakeTerminal(object):
 
 def tls_pair(tls_cert):
     """
-    A TN3270TLSClient and its ConnectTN3270TLS, of a socket whose other
-    end, connecting by TLS, is returned with them, the handshake done.
+    Return a TN3270TLSClient, its ConnectTN3270TLS, and the terminal's end
+    of the socket, after the TLS handshake.
     """
     ours, theirs = socket.socketpair()
     client = TN3270TLSClient(ours, ('127.0.0.1', 3271),
@@ -928,7 +928,7 @@ def test_tls_shutdown(cfg, tls_cert):
 
 
 def test_tls_handshake_failed(cfg, tls_cert):
-    # such as a terminal connecting without TLS.
+    # a terminal that connects without TLS fails the handshake.
     ours, theirs = socket.socketpair()
     client = TN3270TLSClient(ours, ('127.0.0.1', 3271),
                              context=get_ssl_context(*tls_cert))
