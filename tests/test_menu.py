@@ -44,6 +44,15 @@ class Chosen(Exception):
     """ Raised to end the main menu, once its scripts were chosen. """
 
 
+def test_label_declared_only_at_3270(script, session):
+    common = script('common')
+    assert common.declare_label(u'Message') == u''
+    session.session.env['TN3270_TOKEN'] = u'tok'
+    assert common.declare_label(u'Message') == (
+        u'\x1b]3270;tok;label;Message\x07')
+    assert common.declare_label() == u'\x1b]3270;tok;label\x07'
+
+
 def test_main_menu_type_ahead(users, engine, script, session, monkeypatch):
     # two commands typed at once: the second is chosen as soon as the
     # script of the first returns, without awaiting another key.

@@ -166,6 +166,20 @@ def clicked_entry(entries, inp):
     return None
 
 
+def declare_label(label=None):
+    """
+    Return a sequence that labels a 3270 terminal's input row ``label``.
+
+    ``Message`` is shown as ``Message ===>``, cut to 8 characters; with no
+    argument, the default, ``Command ===>``, is restored.  Returns an empty
+    string for other terminals (see x84.tn3270).  The label is reset when a
+    script returns, so after a gosub a script declares it again.
+    """
+    if label is None:
+        return getsession().declare_3270('label')
+    return getsession().declare_3270('label', label)
+
+
 def read_menu_input(editor, entries):
     """
     Read a menu choice by line editor ``editor``, until ENTER or ESCAPE.
@@ -339,7 +353,11 @@ def prompt_input(term, key, sep_ok=u'::', width=None, colors=None):
     sep_ok = colors['highlight'](sep_ok)
 
     echo(u'{sep} {key:<8}: '.format(sep=sep_ok, key=key))
-    return LineEditor(colors=colors, width=width).read() or u''
+    echo(declare_label(key.split()[0]))
+    try:
+        return LineEditor(colors=colors, width=width).read() or u''
+    finally:
+        echo(declare_label())
 
 
 def coerce_terminal_encoding(term, encoding):

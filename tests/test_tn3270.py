@@ -15,7 +15,7 @@ from x84 import tn3270
 from x84.bbs.exception import Disconnected
 from x84.tn3270 import (
     AID_ENTER, AID_PA1, AID_PA2, AID_PF, BLANK, CMD_EW, CMD_EWA, CMD_W,
-    COLORS, EOR, FA_NONDISPLAY, HL_REVERSE, HL_UNDERSCORE, IAC,
+    COLORS, EOR, FA_NONDISPLAY, FA_PROTECTED, HL_REVERSE, HL_UNDERSCORE, IAC,
     ORDER_SBA, QUERY, TTYPE, ConnectTN3270, ConnectTN3270TLS, TN3270Client,
     TN3270TLSClient, TN3270TLSServer, decode_address, encode_address,
     encode_attr, from_ebcdic, keys_of, parse_input, parse_query_reply,
@@ -387,6 +387,11 @@ def send_record(sock, record):
                  bytes((IAC, EOR_MARK)))
 
 
+def declare(client, params):
+    """ Return a sequence declaring ``params`` to ``client``, as the bbs does. """
+    return u'\x1b]3270;{0};{1}\x07'.format(client.token, params)
+
+
 @pytest.fixture
 def pair(cfg):
     """ A TN3270Client, set up as a 24x80 color terminal, and its socket. """
@@ -621,7 +626,7 @@ def test_input_fields(pair):
     client, sock = pair
     display = Display()
     client.send_unicode(u'\x1b[2J\x1b[H Title\r\nfirst row\r\nsecond')
-    client.send_unicode(u'\x1b]3270;fields;1;3\x07\x1b[3;7H')
+    client.send_unicode(declare(client, u'fields;1;3') + u'\x1b[3;7H')
     draw(client, sock, display)
     # each row's field begins by an attribute at the end of the row above.
     for row in (1, 2, 3):
@@ -652,10 +657,10 @@ def test_input_fields(pair):
     assert not client.help_pending
     settle(client, sock)
     # no longer.
-    client.send_unicode(u'\x1b]3270;fields\x07')
+    client.send_unicode(declare(client, u'fields'))
     draw(client, sock, display)
     assert set(display.fields) == {23 * 80, client.input_addr - 1,
-                                   24 * 80 - 1}
+                                   client.display_addr}
     enter(client, sock, AID_ENTER)
     assert client.get_input() == b'\r'
     assert client.pop_events() == []
@@ -723,11 +728,96 @@ def test_password_hidden(pair):
     assert displays[0].line(23).startswith(u' Password ===> ')
     field = displays[0].fields[client.input_addr - 1]
     assert field[0xC0] == encode_attr(FA_NONDISPLAY)
-    for addr in range(client.input_addr, 24 * 80 - 1):
+    for addr in range(client.input_addr, client.display_addr):
         assert displays[1].attrs[addr] == encode_attr(FA_NONDISPLAY)
     update(u'\r\nWelcome, biff.\r\n')
     assert displays[0].line(23).startswith(u' Command ===> ')
     assert displays[1].attrs[client.input_addr] & 0x0C != FA_NONDISPLAY
+
+
+def test_declared_label(pair):
+    client, sock = pair
+    display = Display()
+
+    def update(text):
+        client.send_unicode(text)
+        time.sleep(client.RENDER_IDLE)
+        if client.send_ready():
+            client.send()
+        for record in read_records(sock, timeout=0.3):
+            display.write(record)
+    client.repaint_pending = True
+    update(declare(client, u'label;Message'))
+    assert display.line(23).startswith(u' Message ===> ')
+    # it stays as the bbs draws, even at a login prompt,
+    update(u'chatting\r\n:: Login: ')
+    assert display.line(23).startswith(u' Message ===> ')
+    # but not at a password prompt, whose input is hidden.
+    update(u'\r\n:: Password: ')
+    assert display.line(23).startswith(u' Password ===> ')
+    update(u'\r\n')
+    assert display.line(23).startswith(u' Message ===> ')
+    # cut to the columns it is given.
+    update(declare(client, u'label;Discussion'))
+    assert display.line(23).startswith(u' Discussi ===> ')
+    update(declare(client, u'label'))
+    assert display.line(23).startswith(u' Command ===> ')
+
+
+def test_declared_hidden(pair):
+    client, sock = pair
+    display = Display()
+
+    def update(text):
+        client.send_unicode(text)
+        time.sleep(client.RENDER_IDLE)
+        if client.send_ready():
+            client.send()
+        for record in read_records(sock, timeout=0.3):
+            display.write(record)
+    client.repaint_pending = True
+    # a prompt that doesn't mention a password, as when typing it again.
+    update(declare(client, u'label;Again') + u':: Again: ' +
+           declare(client, u'input;hidden'))
+    assert display.line(23).startswith(u' Password ===> ')
+    field = display.fields[client.input_addr - 1]
+    assert field[0xC0] == encode_attr(FA_NONDISPLAY)
+    update(declare(client, u'input'))
+    assert display.line(23).startswith(u' Again ===> ')
+    field = display.fields[client.input_addr - 1]
+    assert field[0xC0] & 0x0C != FA_NONDISPLAY
+
+
+def test_forged_declaration_ignored(pair):
+    """ Only declarations beginning with the session's token are obeyed. """
+    client, sock = pair
+    display = Display()
+    client.repaint_pending = True
+    draw(client, sock, display)
+    for token in (u'', u'0' * len(client.token)):
+        client.send_unicode(u'\x1b]3270;{0};fields;1;3\x07'.format(token))
+        client.send_unicode(u'\x1b]3270;{0};label;Evil\x07'.format(token))
+    client.send_unicode(u'\x1b]3270;fields;1;3\x07\x1b]3270;input;hidden\x07')
+    client.send_unicode(u'shown')
+    time.sleep(client.RENDER_IDLE)
+    draw(client, sock, display)
+    assert client.fields is None
+    assert display.line(23).startswith(u' Command ===> ')
+    assert display.line(0).startswith(u'shown')
+    assert not client.hidden_input
+
+
+def test_input_field_ends(pair):
+    """ Typing past the end of the input field stops there. """
+    client, sock = pair
+    display = Display()
+    client.repaint_pending = True
+    draw(client, sock, display)
+    # not autoskip, which would send typing to the start of the input
+    # field, the next unprotected one.
+    assert display.fields[client.display_addr][0xC0] == encode_attr(
+        FA_PROTECTED)
+    assert client.display_addr == 24 * 80 - 2
 
 
 def test_alarm(pair):

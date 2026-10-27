@@ -84,6 +84,24 @@ def test_line_editor_read(session):
     assert LineEditor(10).read() is None
 
 
+def test_line_editor_hidden_at_3270(session):
+    """ A masked line editor hides a 3270's input row. """
+    from x84.bbs import LineEditor
+    session.keys(u'pw\r')
+    assert LineEditor(10, hidden=u'x').read() == u'pw'
+    assert u'\x1b]3270' not in session.output()
+    session.session.env['TN3270_TOKEN'] = u'tok'
+    session.keys(u'pw\r')
+    assert LineEditor(10).read() == u'pw'
+    assert u'\x1b]3270' not in session.output()
+    session.keys(u'pw\r')
+    assert LineEditor(10, hidden=u'x').read() == u'pw'
+    output = session.output()
+    assert output.startswith(u'\x1b]3270;tok;input;hidden\x07')
+    assert u'\x1b]3270;tok;input\x07' in output
+    assert u'pw' not in output
+
+
 def test_lightbar(session):
     from x84.bbs import Lightbar
     term = session.term

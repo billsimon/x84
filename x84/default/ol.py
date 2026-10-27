@@ -11,7 +11,7 @@ import time
 from x84.bbs import getsession, getterminal, echo, syncterm_setfont, LineEditor
 from x84.bbs import timeago, decode_pipe
 from x84.bbs import DBProxy, get_ini
-from common import display_banner
+from common import display_banner, declare_label
 
 #: maximum username length of bbs
 username_max_length = get_ini(
@@ -145,7 +145,11 @@ def say_something(term, session):
 
     echo(term.move_x(xpos))
     echo(term.red('say ') + term.bold_red('>') + u' ')
-    inp = LineEditor(MAX_MSGLEN, colors=colors).read()
+    echo(declare_label(u'Oneliner'))
+    try:
+        inp = LineEditor(MAX_MSGLEN, colors=colors).read()
+    finally:
+        echo(declare_label())
     if not inp or not len(inp.strip()):
         # canceled
         echo(term.move_x(0) + term.clear_eol)

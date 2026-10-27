@@ -8,7 +8,7 @@ import random
 from x84.bbs import getsession, getterminal
 from x84.bbs import echo, LineEditor
 from x84.bbs import get_ini, find_user, get_user
-from common import display_banner
+from common import display_banner, declare_label
 
 import logging
 import smtplib
@@ -200,7 +200,11 @@ def prompt_input(term, key, **kwargs):
 
     echo(fixate_next(term))
     echo(u'{sep} {key:>18}: '.format(sep=sep_ok, key=key))
-    entry = LineEditor(colors=colors, **kwargs).read() or u''
+    echo(declare_label(key.split()[0]))
+    try:
+        entry = LineEditor(colors=colors, **kwargs).read() or u''
+    finally:
+        echo(declare_label())
     if not entry.strip():
         echo(fixate_next(term))
         echo(u'{sep} Canceled !\r\n'.format(sep=sep_bad))

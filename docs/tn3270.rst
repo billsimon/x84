@@ -79,12 +79,17 @@ A logon screen, as of VTAM, is displayed on connecting: the board's name
 in large letters, the name of the terminal, its model, the date and time,
 and the PF keys.  ENTER continues, to the board's login.
 
-The bottom row of the 3270 is for typing, after ``Command ===>``, as of
-ISPF, and ENTER sends what was typed.  It is followed by Return when the
-board displays it, as a prompt of a line does, though a slow board may
-take some seconds; when the board takes it as
-a key instead, such as ``q`` to quit, it is not, so that no Return remains
-to be taken as another key.  ENTER alone is Return.
+The bottom row of the 3270 is for typing.  Its label says what to type
+there: ``Command ===>`` by default, as in ISPF, or another, such as
+``Message ===>`` in the chats.  ENTER sends what was typed.  Typing past
+the end of the row locks the keyboard, as at the end of any 3270 field;
+press RESET to unlock it.
+
+What was typed is followed by Return when the board displays it, as a
+line prompt does, though a slow board may take some seconds.  When the
+board takes it as a single key instead, such as ``q`` to quit, no Return
+follows, so none is left over to be read as another key.  ENTER alone is
+Return.
 
 Or move the cursor onto a choice of a menu, such as ``[weather] forecast``
 of the main menu, or of a list, such as a message or an article of Hacker
@@ -114,10 +119,13 @@ PF13-PF24 are the same as PF1-PF12, but PF16 is Tab and PF21 is End.  PA1
 displays the page of keys, as PF1; CLEAR and PA2 draw the screen again.
 After each key, the keyboard is locked until the board has answered.
 
-The cursor of the board is shown underscored.  At the board's login, the
-input row is labeled ``Login ===>``; when the cursor follows a prompt of a
-password, it is labeled ``Password ===>`` and does not display what is
-typed.
+The board's cursor is shown underscored.  At the board's login, the
+input row is labeled ``Login ===>``.  When the cursor follows a password
+prompt, or a line editor masks what is typed, it is labeled ``Password
+===>`` and doesn't show what is typed.  The chats label it ``Message
+===>``, the oneliners ``Oneliner ===>``.  New-user signup, password reset,
+and writing mail or a post name each field, such as ``Username ===>`` or
+``Subject ===>``.
 
 The editor
 ----------
@@ -235,29 +243,54 @@ when connected by TLS, so a script tests for either by
 its terminal type, such as ``IBM-3279-2-E``.  Its keys arrive only when an
 attention key is pressed.
 
-There are no control keys: a script should offer another key for any
-action of a control key, as the editor does by its menu (Escape).
+There are no control keys, so a script should offer another key for
+anything done by a control key, as the editor does with its menu
+(Escape).
 
-A script may ask for clicks of the mouse to be reported, such as by
-blessed's ``term.mouse_enabled()``: ENTER, with the cursor of the 3270 on
-the bbs's screen and nothing typed, is then a click of the left button
-there.  The message lists of :mod:`msgview` do, and the hints of their
-bars, such as ``Q Quit``, are their keys when clicked.  So do menus of
-:func:`common.render_menu_entries`, as the main menu: see
+A script may ask for mouse clicks to be reported, such as with blessed's
+``term.mouse_enabled()``.  Then ENTER, with the 3270's cursor on the bbs's
+screen and nothing typed, is a left-button click there.  The message
+lists in :mod:`msgview` do this, and the hints on their bars, such as
+``Q Quit``, act as their keys when clicked.  So do menus drawn by
+:func:`common.render_menu_entries`, such as the main menu: see
 :func:`common.locate_menu_entries`, :func:`common.menu_clicks` and
 :func:`common.clicked_entry`.
 
-A script may declare rows of the screen input fields, as the editor does,
-by writing ``\x1b]3270;fields;top;bottom\x07``, of their first and last
-rows, and ``\x1b]3270;fields\x07`` when no longer.  Each row is typed
-over at the terminal, its last column excepted, and attention keys are
-then not keystrokes, but session events named ``'tn3270'``, of a dict:
+Declarations
+------------
+
+A script tells the server about its screen with declarations, built by
+``session.declare_3270(*params)``.  Each is written as
+``\x1b]3270;token;params\x07``, where ``token`` is a secret given to the
+session as ``session.env['TN3270_TOKEN']``.  The server obeys only
+declarations with the right token, so text the bbs merely passes along,
+such as a message or a door's output, can't forge one.  For other
+terminals, ``declare_3270`` returns an empty string.
+
+``declare_3270('fields', top, bottom)`` makes rows ``top`` to ``bottom``
+input fields, as the editor does, and ``declare_3270('fields')`` ends
+that.  Each row is typed over at the terminal, except its last column,
+and attention keys then arrive as session events named ``'tn3270'``
+instead of keystrokes.  Each event is a dict:
 
 - ``aid``: the key, ``'enter'`` or ``'pf1'`` to ``'pf12'``.
-- ``text``: what was typed after ``Command ===>``.
-- ``fields``: text of the rows that were typed over, by row.
-- ``cursor``: ``(row, column)`` of the cursor, or None when not on the
+- ``text``: what was typed in the input row.
+- ``fields``: the text of each row that was typed over, keyed by row.
+- ``cursor``: the cursor's ``(row, column)``, or None when it isn't on the
   bbs's screen.
+
+``declare_3270('label', name)`` labels the input row ``name ===>``; names
+are cut to 8 characters.  ``declare_3270('label')`` restores the default,
+``Command ===>``.  :func:`common.declare_label` does the same.  A password
+prompt is always labeled ``Password ===>``.
+
+``declare_3270('input', 'hidden')`` hides what is typed in the input row,
+and ``declare_3270('input')`` shows it again, unless the prompt asks for a
+password.  ``LineEditor`` does this when it masks what is typed, as when a
+password is typed a second time to confirm it.
+
+The label and hidden input are reset when a script returns, so a script
+that calls gosub declares them again afterward.
 
 .. _x3270: https://x3270.miraheze.org/
 .. _pyte: https://github.com/selectel/pyte

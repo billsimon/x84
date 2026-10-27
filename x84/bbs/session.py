@@ -184,6 +184,19 @@ class Session(object):
         ))
         return retval.copy()
 
+    def declare_3270(self, *params):
+        """
+        Return a sequence declaring ``params`` to a 3270 terminal's server.
+
+        Such as ``declare_3270('label', 'Message')``.  It begins with this
+        session's token, so the server knows it came from the bbs (see
+        x84.tn3270).  Returns an empty string for other terminals.
+        """
+        token = self.env.get('TN3270_TOKEN')
+        if not token:
+            return u''
+        return u'\x1b]3270;{0}\x07'.format(u';'.join((token,) + params))
+
     @property
     def duration(self):
         """ Seconds elapsed since connection began (as float). """
@@ -785,7 +798,13 @@ class Session(object):
         # the engine's idle timeout while it runs: its users read others'
         # messages without typing.
         with self._timeout_held(not getattr(module, 'IDLE_TIMEOUT', True)):
-            value = module.main(*script.args, **script.kwargs)
+            try:
+                value = module.main(*script.args, **script.kwargs)
+            finally:
+                # a 3270's input row label (see common.declare_label) and
+                # hidden input belong to the script that declared them.
+                self.write(self.declare_3270('label') +
+                           self.declare_3270('input'))
 
         # remove the current script from the script stack, since it has
         # finished executing.

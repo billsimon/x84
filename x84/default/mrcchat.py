@@ -33,6 +33,7 @@ from x84.bbs.textbuffer import char_width, text_width, wrap_offsets
 from x84.mrc import (Packet, RESERVED, format_packet, parse_packet,
                      name_tag, site_tag, strip_pipes, ascii_text)
 from editor import ctrl, is_escape
+from common import declare_label
 
 #: chatting users are not disconnected for idling, see
 #: :meth:`x84.bbs.session.Session.runscript`.
@@ -1209,6 +1210,7 @@ def main():
     screen = ChatScreen(term, session.encoding)
     chat = MRCChat(term, session, screen)
     screen.redraw()
+    echo(declare_label(u'Message'))
     try:
         if chat.enter():
             chat.run()
