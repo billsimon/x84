@@ -98,7 +98,7 @@ def free_port():
 
 @pytest.fixture(scope='session')
 def tls_cert(tmp_path_factory):
-    """ Return paths of a self-signed certificate of 127.0.0.1, and its key. """
+    """ Return paths to a self-signed certificate for 127.0.0.1, and its key. """
     import datetime
     import ipaddress
     from cryptography import x509
@@ -115,8 +115,10 @@ def tls_cert(tmp_path_factory):
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=30))
+            # s3270 checks only DNS names, so 127.0.0.1 is also one.
             .add_extension(x509.SubjectAlternativeName(
-                [x509.IPAddress(ipaddress.ip_address(u'127.0.0.1'))]),
+                [x509.IPAddress(ipaddress.ip_address(u'127.0.0.1')),
+                 x509.DNSName(u'127.0.0.1')]),
                 critical=False)
             .add_extension(x509.BasicConstraints(ca=True, path_length=None),
                            critical=True)
