@@ -62,6 +62,19 @@ def test_info_names_kind(session):
     assert session.session.to_dict()['kind'] == 'test'
 
 
+def test_matrix_script(cfg):
+    from x84.bbs.session import matrix_script
+    cfg.set('matrix', 'script', 'matrix')
+    assert matrix_script('tn3270-tls') == 'matrix'
+    # a kind connected by TLS uses the script for the kind without it.
+    cfg.set('matrix', 'script_tn3270', 'matrix3270')
+    assert matrix_script('tn3270') == 'matrix3270'
+    assert matrix_script('tn3270-tls') == 'matrix3270'
+    assert matrix_script('telnet') == 'matrix'
+    cfg.set('matrix', 'script_tn3270-tls', 'matrixtls')
+    assert matrix_script('tn3270-tls') == 'matrixtls'
+
+
 def test_global_ayt_is_acknowledged(session):
     session.send('global', ('AYT', 'other-sid'))
     session.session.poll_event('anything')

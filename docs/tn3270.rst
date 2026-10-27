@@ -68,8 +68,9 @@ The certificate is loaded when the board starts: restart the board after
 renewing it.
 
 Connections by TLS are named ``tn3270-tls`` in the log and in
-``session.kind``, and their sessions run the matrix script set by
-``script_tn3270-tls`` in section ``[matrix]``, when set.
+``session.kind``.  Their sessions run the matrix script set by
+``script_tn3270-tls`` in section ``[matrix]``, or else by
+``script_tn3270``.
 
 Using the board
 ===============

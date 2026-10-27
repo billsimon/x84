@@ -1601,6 +1601,22 @@ class TN3270TLSClient(TN3270Client):
         with self._sock_lock:
             return super(TN3270TLSClient, self).send()
 
+    def _sock_send(self, send_bytes):
+        """
+        Send ``send_bytes`` to the socket, returning the number sent.
+
+        :raises Disconnected: on sock.send error.
+        """
+        try:
+            return self.sock.send(send_bytes)
+        except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+            # the socket can't send yet.  It remembers how much of this data
+            # it already encrypted, so the data goes back into the buffer
+            # and is passed to it again later.
+            return 0
+        except OSError as err:
+            raise Disconnected('send: {0}'.format(err))
+
     def shutdown(self):
         """ End the TLS connection, then shutdown and close socket. """
         with self._sock_lock:
@@ -1761,10 +1777,11 @@ class ConnectTN3270TLS(ConnectTN3270):
                           .format(client=client, err=err))
             raise Disconnected('tls handshake: {0}'.format(err))
         super(ConnectTN3270TLS, self)._set_socket_opts()
-        client.handshaken = True
+        # logged before the engine may read the socket, and so close it.
         self.log.debug('{client.addrport}: {version}, {cipher}'.format(
             client=client, version=client.sock.version(),
             cipher=client.sock.cipher()[0]))
+        client.handshaken = True
 
 
 class TN3270Server(BaseServer):
@@ -1784,6 +1801,7 @@ class TN3270TLSServer(TN3270Server):
     client_factory = TN3270TLSClient
     connect_factory = ConnectTN3270TLS
     port_option = 'tls_port'
+    default_port = None
     name = 'tn3270 tls'
 
     def __init__(self, config):

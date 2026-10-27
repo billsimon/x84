@@ -3,7 +3,6 @@
 import errno
 import logging
 import socket
-import ssl
 import threading
 import time
 import warnings
@@ -101,33 +100,28 @@ class BaseClient(object):
             ready_bytes = bytes(self.send_buffer)
             self.send_buffer = bytearray()
 
-        def _send(send_bytes):
-            """
-            Inner low-level function for socket send.
-
-            :raises Disconnected: on sock.send error.
-            """
-            try:
-                return self.sock.send(send_bytes)
-            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
-                # a tls socket that can't send yet.  It remembers how much
-                # of this data it already encrypted, so the data goes back
-                # into the buffer below and is passed to it again later.
-                return 0
-            except OSError as err:
-                if err.errno in (errno.EDEADLK, errno.EAGAIN):
-                    self.log.debug('{self.addrport}: {err} (bandwidth exceed)'
-                                   .format(self=self, err=err))
-                    return 0
-                raise Disconnected('send: {0}'.format(err))
-
-        sent = _send(ready_bytes)
+        sent = self._sock_send(ready_bytes)
         if sent < len(ready_bytes):
             # re-buffer data that could not be pushed to socket, in front
             # of any data that may have been buffered meanwhile.
             with self._send_lock:
                 self.send_buffer[0:0] = ready_bytes[sent:]
         return sent
+
+    def _sock_send(self, send_bytes):
+        """
+        Low-level socket send, returning the number of bytes sent.
+
+        :raises Disconnected: on sock.send error.
+        """
+        try:
+            return self.sock.send(send_bytes)
+        except OSError as err:
+            if err.errno in (errno.EDEADLK, errno.EAGAIN):
+                self.log.debug('{self.addrport}: {err} (bandwidth exceed)'
+                               .format(self=self, err=err))
+                return 0
+            raise Disconnected('send: {0}'.format(err))
 
     def send_ready(self):
         """ Whether any data is buffered for delivery. """

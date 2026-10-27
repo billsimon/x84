@@ -68,7 +68,8 @@ class BaseServer(object):
         :param configparser.ConfigParser config: bbs configuration, the
             section named by :attr:`config_section` should contain options
             ``'addr'``, and the port option, :attr:`port_option`.
-        :raises SystemExit: the address could not be bound.
+        :raises SystemExit: the port is not set or not a number, or the
+            address could not be bound.
         """
         self.log = logging.getLogger(self.__class__.__module__)
         self.config = config
@@ -82,9 +83,15 @@ class BaseServer(object):
 
         section = self.config_section
         self.address = config.get(section, 'addr')
-        self.port = self.default_port
-        if config.has_option(section, self.port_option):
-            self.port = config.getint(section, self.port_option)
+        try:
+            self.port = config.getint(section, self.port_option,
+                                      fallback=self.default_port)
+        except ValueError:
+            self.port = None
+        if self.port is None:
+            self.log.error('[{0}] {1} must be a port number'
+                           .format(section, self.port_option))
+            raise SystemExit(1)
         self.server_socket = self.bind(self.address, self.port)
         self.log.info('{name} listening on {self.address}:{self.port}/tcp'
                       .format(name=self.name or section, self=self))

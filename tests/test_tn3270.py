@@ -951,7 +951,11 @@ def test_tls_send_retried():
             self.sent.append(data)
             return len(data)
 
-    client = TN3270Client(Sock(), ('127.0.0.1', 3271))
+    class Context(object):
+        def wrap_socket(self, sock, **kwargs):
+            return sock
+
+    client = TN3270TLSClient(Sock(), ('127.0.0.1', 3271), context=Context())
     client.send_str(b'abc')
     assert client.send() == 0
     client.send_str(b'def')
@@ -970,6 +974,15 @@ def test_tls_server(cfg, tls_cert):
         # the certificate is not a key.
         TN3270TLSServer(cfg)
     cfg.set('tn3270', 'key', tls_cert[1])
+    for port in (None, u'yes'):
+        # tls_port is not set, or not a number: not the port 3270 either.
+        if port is None:
+            cfg.remove_option('tn3270', 'tls_port')
+        else:
+            cfg.set('tn3270', 'tls_port', port)
+        with pytest.raises(SystemExit):
+            TN3270TLSServer(cfg)
+    cfg.set('tn3270', 'tls_port', '0')
     server = TN3270TLSServer(cfg)
     try:
         assert server.server_socket.getsockname()[1] != 3270
@@ -977,6 +990,35 @@ def test_tls_server(cfg, tls_cert):
             'context': server.context}
     finally:
         server.server_socket.close()
+
+
+def test_tls_accept_failed_closes_socket():
+    # a connection that can't be wrapped for TLS is closed, not leaked.
+    import logging
+    import x84.engine
+
+    wrapped = []
+
+    class Context(object):
+        def wrap_socket(self, sock, **kwargs):
+            wrapped.append(sock)
+            raise ssl.SSLError('wrap failed')
+
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    peer = socket.create_connection(listener.getsockname())
+    server = TN3270TLSServer.__new__(TN3270TLSServer)
+    server.server_socket = listener
+    server.clients, server.threads = {}, []
+    server.context = Context()
+    try:
+        x84.engine.accept(logging.getLogger('test'), server, lambda ip: True)
+        assert len(wrapped) == 1 and wrapped[0].fileno() == -1
+        assert not server.clients and not server.threads
+    finally:
+        peer.close()
+        listener.close()
 
 
 def test_negotiate_dx3270(cfg):

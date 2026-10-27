@@ -214,8 +214,13 @@ def accept(log, server, check_ban):
             return
 
         # instantiate a client of this type
-        client = server.client_factory(sock, address_pair,
-                                       **client_factory_kwargs)
+        try:
+            client = server.client_factory(sock, address_pair,
+                                           **client_factory_kwargs)
+        except OSError:
+            # such as by wrapping it for tls: logged below.
+            sock.close()
+            raise
 
         # spawn on-connect negotiation thread.  When successful,
         # a new sub-process is spawned and registered as a session tty.

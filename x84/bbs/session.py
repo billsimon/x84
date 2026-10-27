@@ -73,6 +73,25 @@ def gosub(script, *args, **kwargs):
     return getsession().runscript(script)
 
 
+def matrix_script(kind):
+    """
+    Return the name of the matrix script for sessions whose kind is ``kind``.
+
+    It is ``script_{kind}`` in section ``[matrix]``, where ``kind`` may be
+    ``telnet``, ``ssh``, or any kind of supporting transport, or else
+    ``script``.  A kind connected by TLS, such as ``tn3270-tls``, uses
+    ``script_tn3270`` when it has no script of its own.
+    """
+    kinds = [kind]
+    if kind.endswith('-tls'):
+        kinds.append(kind[:-len('-tls')])
+    for name in kinds:
+        script = get_ini('matrix', 'script_{0}'.format(name))
+        if script:
+            return script
+    return get_ini('matrix', 'script')
+
+
 class Session(object):
 
     """ A per-process Session. Begins by the :meth:`run`. """
@@ -125,13 +144,9 @@ class Session(object):
 
         # private attributes
         self._script_stack = [
-            # Initialize the "script stack" with the matrix script
-            # using the default configuration value of `script' for all
-            # connections, but preferring `script_{kind}', where `kind'
-            # may be `telnet', `ssh', or any kind of supporting transport.
+            # Initialize the "script stack" with the matrix script.
             Script(
-                name=get_ini('matrix', 'script_{self.kind}'.format(self=self)
-                             ) or get_ini('matrix', 'script'),
+                name=matrix_script(kind),
                 args=matrix_args,
                 kwargs=matrix_kwargs)
         ]
