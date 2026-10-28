@@ -1035,7 +1035,7 @@ class IRCChat(object):
                 (u'/names', u'list who is in this channel'),
                 (u'/whois nick', u'tell about a user'),
                 (u'/away [message]', u'mark yourself away, or back'),
-                (u'/colors', u'display pipe codes of colors'),
+                (u'/colors', u'display the pipe codes for colors'),
                 (u'/clear', u'clear the screen'),
                 (u'/quit [message]', u'leave the chat')):
             self.system(u'\x02{}\x02  {}', usage.ljust(19),

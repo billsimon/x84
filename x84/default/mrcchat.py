@@ -96,12 +96,12 @@ PREFERENCES = collections.OrderedDict((
     ('leaveroom', u'|07- |02%1 |10has left the room.'),
 ))
 
-#: what each preference is, of /set.
+#: what each preference is, as /set lists it.
 PREFERENCE_HELP = {
     'defaultroom': u'the room joined on entering chat',
-    'nickcolor': u'the pipe code of the color of your nick',
-    'ltbracket': u'the bracket left of your nick, of pipe codes',
-    'rtbracket': u'the bracket right of your nick, of pipe codes',
+    'nickcolor': u'your nick\'s color, as a pipe code',
+    'ltbracket': u'the bracket left of your nick; allows pipe codes',
+    'rtbracket': u'the bracket right of your nick; allows pipe codes',
     'enterchat': u'told others as you enter chat; %1 is your nick',
     'leavechat': u'told others as you leave chat',
     'enterroom': u'told a room as you enter it',
@@ -677,9 +677,9 @@ class MRCChat(object):
         self.session.flush_event('mrc')
         self.session.send_event('mrc', ('join', self.nick))
         self.joined = True
-        self.system(u'Welcome to Multi Relay Chat, a chat of BBSes.')
-        self.system(u'Type |15/? |11for commands, |15/help |11for those of '
-                    u'the server, and |15/quit |11to leave.')
+        self.system(u'Welcome to Multi Relay Chat, a chat between BBSes.')
+        self.system(u'Type |15/? |11for commands, |15/help |11for the '
+                    u'server\'s commands, and |15/quit |11to leave.')
         event, data = self.session.read_events(('mrc',), timeout=10)
         if event is None:
             self.error(u'The bbs did not answer.')
@@ -1014,7 +1014,7 @@ class MRCChat(object):
         return True
 
     def cmd_local_help(self, _):
-        """ /?: display commands of this client. """
+        """ /?: display the commands this client handles. """
         for usage, text in (
                 (u'/join room', u'move to a room'),
                 (u'/me action', u'describe what you are doing'),
@@ -1024,11 +1024,11 @@ class MRCChat(object):
                 (u'/topic text', u'change the topic of the room'),
                 (u'/rooms', u'list the rooms'),
                 (u'/bbses', u'list the BBSes connected'),
-                (u'/ctcp target command', u'VERSION, TIME, PING, of a user, '
-                                          u'#room or *'),
+                (u'/ctcp target command', u'send VERSION, TIME or PING to a '
+                                          u'user, #room or *'),
                 (u'/twit add|del user', u'ignore a user, or /twit list'),
                 (u'/set', u'list your settings, such as your nick color'),
-                (u'/colors', u'display pipe codes of colors'),
+                (u'/colors', u'display the pipe codes for colors'),
                 (u'/clear', u'clear the screen'),
                 (u'/quit [message]', u'leave the chat')):
             self.show(u'|15* |15{0}|07{1}'.format(usage.ljust(22), text))
@@ -1039,7 +1039,7 @@ class MRCChat(object):
                     u'completes a nick.')
 
     def cmd_colors(self, _):
-        """ /colors: display pipe codes of colors. """
+        """ /colors: display the pipe codes for colors. """
         self.system(u'Color what you say by pipe codes:')
         self.show_literal(*[(Style(num, None), u'|{0:02d} '.format(num))
                             for num in range(1, 16)])
@@ -1182,7 +1182,7 @@ class MRCChat(object):
                 return
         elif name == u'nickcolor':
             if not re.match(r'^\|(0[1-9]|1[0-5])$', value):
-                self.error(u'A nick\'s color is a pipe code, of 01 to 15.')
+                self.error(u'A nick\'s color is a pipe code, 01 to 15.')
                 return
         elif name == u'ltbracket':
             if len(visible) != 1 or visible == u' ':

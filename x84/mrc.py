@@ -24,8 +24,8 @@ Options of section ``[mrc]``:
   ``5001``; its port without ssl is ``5000``.
 - ``ssl``: whether to connect by TLS, ``yes``; ``ssl_verify``, whether to
   verify the server's certificate, ``yes``.
-- ``bbsname``: the bbs's name, as listed by ``/bbses``, of pipe codes;
-  the ``bbsname`` of section ``[system]`` by default.
+- ``bbsname``: the bbs's name, as listed by ``/bbses``, which allows pipe
+  codes; the ``bbsname`` of section ``[system]`` by default.
 - ``info_web``, ``info_telnet``, ``info_ssh``, ``info_sysop``,
   ``info_desc``: the bbs's information, as displayed by ``/info``.
 """

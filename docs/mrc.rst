@@ -30,11 +30,11 @@ Add to ``default.ini``::
     info_sysop = your name
     info_desc = what the bbs is about
 
-``bbsname`` is the bbs's name as other BBSes see it, of pipe codes; it is
-the ``bbsname`` of section ``[system]`` by default.  The ``info_``
-options are displayed by ``/info`` of the server.  Port ``5000`` is of
-the server without ssl (``ssl = no``).  ``room`` is the room first
-joined; a user may choose their own, by ``/set defaultroom``.
+``bbsname`` is the bbs's name as other BBSes see it, and allows pipe
+codes; it is the ``bbsname`` of section ``[system]`` by default.  The
+``info_`` options are displayed by ``/info`` of the server.  Port
+``5000`` is of the server without ssl (``ssl = no``).  ``room`` is the
+room first joined; a user may choose their own, by ``/set defaultroom``.
 
 Restart x/84; its log tells of connecting::
 
