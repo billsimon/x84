@@ -1,4 +1,4 @@
-""" Tests of multi relay chat: the relay of the engine, and its script. """
+""" Tests for multi relay chat: the engine's relay, and its script. """
 # std imports
 import logging
 import platform
@@ -33,9 +33,9 @@ def wait_for(predicate, timeout=5):
 class FakeMRC(threading.Thread):
 
     """
-    An MRC server of one bbs, answering as the server does: a packet of a
-    user is sent back, as to every bbs; ``USERLIST`` is answered of
-    ``users``, and ``ping`` and ``lines`` are sent of :meth:`push`.
+    An MRC server for one bbs, answering as the server does: a user's
+    packet is sent back, as to every bbs; ``USERLIST`` is answered with
+    ``users``, and ``ping`` and ``lines`` are sent by :meth:`push`.
     """
 
     def __init__(self, users=u'biff,marty'):
@@ -66,7 +66,7 @@ class FakeMRC(threading.Thread):
             return list(self.received)
 
     def bodies(self, user=None):
-        """ Messages received, of every packet, or of ``user``. """
+        """ Messages received, from every packet, or from ``user``. """
         return [line.split(u'~')[6] for line in self.lines()
                 if line.count(u'~') >= 7 and
                 user in (None, line.split(u'~')[0])]
@@ -169,7 +169,7 @@ def test_packets():
                             u'lobby', u'|07hello')
     assert format_packet(packet) == line
     assert parse_packet(u'not~a~packet') is None
-    # a field is of printable ascii: ~ is a space, controls are removed.
+    # a field is printable ascii: ~ is a space, controls are removed.
     assert format_packet(packet._replace(body=u'a~b\r\nc\x1bd')) == (
         u'biff~Bttf_BBS~lobby~~~lobby~a bcd~')
     assert ascii_text(u'caf\u00e9 \u00ff\u20ac') == u'cafe y?'
@@ -182,8 +182,8 @@ def test_packets():
 
 
 def test_colors(script, session):
-    # bright colors are those of the terminal, or bold, of an ansi
-    # terminal of 8 colors; dark gray is not black.
+    # bright colors are the terminal's, or bold, on an ansi terminal
+    # with 8 colors; dark gray is not black.
     import blessed
     mrcchat = script(SCRIPT)
     Style = mrcchat.Style
@@ -202,7 +202,7 @@ def test_colors(script, session):
     assert mrcchat.style_sequence(xterm8, Style(8, None)).endswith(
         u'\x1b[1m\x1b[30m\x1b[90m')
 
-    # black of a black background is hidden, written as spaces; black of
+    # black on a black background is hidden, written as spaces; black on
     # another background is not.
     screen = mrcchat.ChatScreen(session.term, 'utf8')
     screen.add(mrcchat.parse_pipes(u'|08-|00.|07Use |16|00__|20|00red'))
@@ -229,8 +229,8 @@ def test_split_message(script, session):
 
 
 def test_relay(mrc_server, relay):
-    # the relay begins the connection as of the bbs, answers pings, and
-    # passes packets: those of the server to every session, those of a
+    # the relay begins the connection for the bbs, answers pings, and
+    # passes packets: the server's to every session, and those from a
     # session to the server, but for those it answers itself.
     assert received(relay) == [(None, ('status', 'connected'))]
     system = u'{0}_{1}'.format(platform.system(), platform.machine())
@@ -255,7 +255,7 @@ def test_relay(mrc_server, relay):
     assert relay.stats == u'12 5 30 2'
     assert line in mrc_server.lines()
 
-    # latency, statistics, and version, of a session, are of the relay.
+    # a session's latency, statistics, and version are answered by the relay.
     relay.send('sid-1', u'biff~Bttf_BBS~lobby~CLIENT~Bttf_BBS~lobby~LATENCY~')
     relay.send('sid-2', u'biff~Bttf_BBS~lobby~CLIENT~Bttf_BBS~lobby~STATS~')
     relay.send('sid-1', u'biff~Bttf_BBS~lobby~SERVER~Bttf_BBS~lobby~VERSION~')
@@ -275,7 +275,7 @@ def test_relay(mrc_server, relay):
 
 
 def test_relay_reconnects(mrc_server, relay, monkeypatch):
-    # a connection lost is connected again, telling sessions of it; a
+    # a lost connection is connected again, telling sessions about it; a
     # stopped relay tells the server.
     monkeypatch.setattr(x84.mrc, 'RETRY_INTERVALS', (0.1,))
     assert received(relay) == [(None, ('status', 'connected'))]
@@ -386,7 +386,7 @@ def test_hub():
 
 class MRCEngine(Engine):
 
-    """ The engine of a test session, of a hub of multi relay chat. """
+    """ The engine for a test session, with a multi relay chat hub. """
 
     def __init__(self, harness, hub):
         super().__init__(harness)
@@ -419,7 +419,7 @@ class MRCEngine(Engine):
 
 
 def start_engine(engine, session, hub):
-    """ Return a :class:`MRCEngine` of ``hub``, in place of ``engine``. """
+    """ Return a :class:`MRCEngine` with ``hub``, in place of ``engine``. """
     engine.stopped = True
     engine.join()
     mrc_engine = MRCEngine(session, hub)
@@ -429,7 +429,7 @@ def start_engine(engine, session, hub):
 
 @pytest.fixture
 def chat(session, users, engine, mrc_server, cfg):
-    """ Return an engine of a relay connected to the fake server. """
+    """ Return an engine with a relay connected to the fake server. """
     cfg.set('system', 'bbsname', 'Bttf BBS')
     relay = Relay(u'127.0.0.1', mrc_server.port, use_ssl=False,
                   bbsname=u'Bttf BBS')
@@ -505,14 +505,14 @@ def test_chat(chat, script, mrc_server):
         u'|07- |12marty|04 has left chat |07(|15see you|07)', u'LOGOFF']
     assert not any(u'LATENCY' in body for body in bodies)
 
-    # the screen, before leaving: before the message of it is written on
-    # the last row.
+    # the screen before leaving: before the message about it is written
+    # on the last row.
     before = output[:output.rindex(u'\x1b[24;1H', 0,
                                    output.rindex(u'You have left chat'))]
     screen = screen_of(before)
     text = u'\n'.join(screen.display)
     assert screen.display[0].startswith(u'#lobby  Great Scott!')
-    # biff and marty, of the server; doc, of what they said.
+    # biff and marty are listed by the server; doc is added by speaking.
     assert u'3 users' in screen.display[0]
     assert u'<biff> hey marty, nice vest' in text
     assert u'<marty> hello, biff' in text
@@ -521,7 +521,7 @@ def test_chat(chat, script, mrc_server):
     assert u'evil [2J]0;x done' in text
     assert screen.display[-1].startswith(u'[#lobby]')
     assert all(row[79] == u' ' for row in screen.display[1:-1])
-    # the mention is marked, of the time of its message.
+    # the mention is marked, at the time of its message.
     row = next(idx for idx, line in enumerate(screen.display)
                if u'nice vest' in line)
     assert screen.buffer[row][0].bg == 'red'
@@ -619,7 +619,7 @@ def test_not_available(session, users, engine, script):
 
 
 def test_cp437_terminal(chat, script, mrc_server, session):
-    # a terminal of cp437 displays what is not of it, folded, and the
+    # a cp437 terminal displays what cp437 lacks, folded, and the
     # screen keeps its shape.
     session.session.encoding = 'cp437'
     mrcchat = script(SCRIPT)
