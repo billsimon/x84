@@ -1,36 +1,36 @@
 """
 IRC chat script for x/84.
 
-Joins one channel of an IRC network, by the ``[irc]`` section of the
-configuration.  The screen is the messages of the channel, newest at the
-bottom, and the input line below them, of the channel's name: type to say
+Joins one channel on an IRC network, set in the ``[irc]`` section of the
+configuration.  The screen is the channel's messages, newest at the
+bottom, and the input line below them, named for the channel: type to say
 something, or a command, such as ``/help``.  Page Up and Page Down (PF7
 and PF8 at a 3270) scroll back through the messages.
 
-Text received is displayed only as text: the formatting of IRC (bold,
-colors, and the like) is translated to that of the terminal, and any other
-control character, such as of an escape sequence, is discarded.
+Text received is displayed only as text: IRC formatting (bold, colors,
+and the like) is translated to the terminal's, and any other control
+character, such as one starting an escape sequence, is discarded.
 
-Options of section ``[irc]``:
+Options in section ``[irc]``:
 
 - ``server``, ``port``: the server, ``irc.libera.chat`` port ``6697``.
 - ``ssl``: whether to connect by TLS; ``ssl_verify``, whether to verify the
   server's certificate, ``yes`` by default.
 - ``channel``: the channel joined, ``#x84``.
 - ``sasl_user``, ``sasl_password``: an account to log in to by SASL,
-  as networks such as Libera.Chat prefer; or ``password``, a password of
+  as networks such as Libera.Chat prefer; or ``password``, a password for
   the server, sent by PASS.
-- ``max_nick``: the longest nick, ``16``.  A user's nick is of their
+- ``max_nick``: the longest nick, ``16``.  A user's nick is made from their
   handle; one in use is followed by ``_`` or a digit.
 - ``connect_timeout``: seconds to wait for the server, ``30``.
-- ``quit_message``: the message of quitting, the bbs's name by default.
-- ``enable_privnotice``: whether to display notices of the server, such
-  as while connecting.
+- ``quit_message``: the message sent on quitting, the bbs's name by default.
+- ``enable_privnotice``: whether to display the server's notices, such
+  as those while connecting.
 - ``max_scrollback``: messages kept to scroll back to, ``200``;
   ``max_input``, the longest line typed, ``1000``, sent as several
   messages when it is longer than one.
 - ``color_inputbar``: color of the input line's prompt, ``reverse``;
-  ``syncterm_font``, the font of SyncTERM, ``topaz``.
+  ``syncterm_font``, the font for SyncTERM, ``topaz``.
 """
 # std imports
 import codecs
@@ -59,10 +59,10 @@ from jaraco.stream.buffer import LenientDecodingLineBuffer
 #: :meth:`x84.bbs.session.Session.runscript`.
 IDLE_TIMEOUT = False
 
-#: how many messages of scrollback to keep.
+#: how many messages to keep for scrollback.
 MAX_SCROLLBACK = get_ini('irc', 'max_scrollback', getter='getint') or 200
 
-#: how many characters of input to allow; a line longer than a message is
+#: how many characters to allow typed; a line longer than a message is
 #: sent as several.
 MAX_INPUT = get_ini('irc', 'max_input', getter='getint') or 1000
 
@@ -78,7 +78,7 @@ CHANNEL = get_ini('irc', 'channel') or '#x84'
 #: irc server password, sent by PASS.
 PASSWORD = get_ini('irc', 'password') or None
 
-#: account and password of SASL login, when both are set.
+#: account and password for SASL login, when both are set.
 SASL_USER = get_ini('irc', 'sasl_user') or None
 SASL_PASSWORD = get_ini('irc', 'sasl_password') or None
 
@@ -96,10 +96,10 @@ SSL_VERIFY = (get_ini('irc', 'ssl_verify', getter='getboolean')
 #: seconds to wait for the server to answer, connecting.
 CONNECT_TIMEOUT = get_ini('irc', 'connect_timeout', getter='getint') or 30
 
-#: Whether to display notices of the server (such as of connecting).
+#: Whether to display the server's notices (such as while connecting).
 ENABLE_PRIVNOTICE = get_ini('irc', 'enable_privnotice', getter='getboolean')
 
-#: message of quitting irc.
+#: message sent on quitting irc.
 QUIT_MESSAGE = (get_ini('irc', 'quit_message') or
                 get_ini('system', 'bbsname') or u'x/84 bbs')
 
@@ -112,7 +112,7 @@ SYNCTERM_FONT = get_ini('irc', 'syncterm_font') or 'topaz'
 #: answer to CTCP VERSION.
 VERSION = u'x/84 bbs ircchat'
 
-#: terminal colors of mIRC colors 0 to 15: their bright colors, of names
+#: terminal colors for mIRC colors 0 to 15: their bright colors, named
 #: 'bold_', are displayed by :func:`fg_sequence`.
 MIRC_COLORS = (
     'bold_white', 'black', 'blue', 'green', 'bold_red', 'red',
@@ -121,15 +121,15 @@ MIRC_COLORS = (
     'white',
 )
 
-#: rgb of mIRC colors 0 to 15, of which the nearest is displayed for others
-#: at terminals of fewer than 256 colors.
+#: rgb for mIRC colors 0 to 15; the nearest is displayed for other colors
+#: at terminals with fewer than 256 colors.
 MIRC_RGB = (
     0xffffff, 0x000000, 0x00007f, 0x009300, 0xff0000, 0x7f0000, 0x9c009c,
     0xfc7f00, 0xffff00, 0x00fc00, 0x009393, 0x00ffff, 0x0000fc, 0xff00ff,
     0x7f7f7f, 0xd2d2d2,
 )
 
-#: rgb of the extended mIRC colors, 16 to 98.
+#: rgb for the extended mIRC colors, 16 to 98.
 MIRC_EXTENDED = (
     0x470000, 0x472100, 0x474700, 0x324700, 0x004700, 0x00472c, 0x004747,
     0x002747, 0x000047, 0x2e0047, 0x470047, 0x47002a, 0x740000, 0x743a00,
@@ -145,33 +145,33 @@ MIRC_EXTENDED = (
     0x656565, 0x818181, 0x9f9f9f, 0xbcbcbc, 0xe2e2e2, 0xffffff,
 )
 
-#: mIRC colors of nicks, chosen by each nick.
+#: mIRC colors for nicks, chosen by each nick.
 NICK_COLORS = (3, 4, 6, 7, 9, 10, 11, 12, 13)
 
-#: mIRC colors of pipe codes |00 to |15, which are of ANSI colors.
+#: mIRC colors for pipe codes |00 to |15, which are ANSI colors.
 PIPE_MIRC = (1, 2, 3, 10, 5, 6, 7, 15, 14, 12, 9, 11, 4, 13, 8, 0)
 
-#: pipe codes of messages typed.
+#: pipe codes in messages typed.
 RE_PIPE = re.compile(r'\|(0[0-9]|1[0-5]|b[0-7]|bb|uu|rr|nn)', re.IGNORECASE)
 
-#: characters of nicks, but letters and digits.
+#: characters allowed in nicks, besides letters and digits.
 NICK_SPECIAL = u'[]\\`_^{|}'
 
-#: bytes of a message sent, of a line of at most 512 bytes as relayed to
-#: others, with the prefix of its sender.
+#: bytes in a message sent, so that the line relayed to others, with its
+#: sender's prefix, is at most 512 bytes.
 MESSAGE_BYTES = 400
 
-#: indentation of rows that continue a message, past its time.
+#: indentation for rows that continue a message, past its time.
 INDENT = 6
 
-#: formatting characters of IRC, toggling a style.
+#: IRC formatting characters, toggling a style.
 TOGGLES = {u'\x02': 'bold', u'\x1d': 'italic', u'\x1f': 'underline',
            u'\x16': 'reverse'}
 
-#: formatting characters of IRC not displayed: strikethrough, monospace.
+#: IRC formatting characters not displayed: strikethrough, monospace.
 IGNORED = u'\x1e\x11'
 
-#: formatting characters of IRC: reset, color, hex color.
+#: IRC formatting characters: reset, color, hex color.
 RESET, COLOR, HEX_COLOR = u'\x0f', u'\x03', u'\x04'
 
 RE_COLOR = re.compile(r'([0-9]{1,2})(?:,([0-9]{1,2}))?')
@@ -181,17 +181,17 @@ RE_HEX_COLOR = re.compile(r'([0-9a-fA-F]{6})(?:,([0-9a-fA-F]{6}))?')
 BIDI = frozenset(u'\u200e\u200f\u202a\u202b\u202c\u202d\u202e'
                  u'\u2066\u2067\u2068\u2069')
 
-#: events of numeric replies of errors, displayed as they are.
+#: events for numeric error replies, displayed as they are.
 ERROR_EVENTS = frozenset(
     name for code, name in irc.events.numeric.items()
     if 400 <= int(code) < 600)
 
-#: events of a nick refused, of which another is tried, connecting.
+#: events for a nick refused while connecting, when another is tried.
 NICK_REFUSED = ('nicknameinuse', 'erroneusnickname', 'nickcollision',
                 'unavailresource')
 
-#: style of text, of IRC formatting: ``fg`` and ``bg`` are mIRC colors, 0
-#: to 98, or None.
+#: style of text, from IRC formatting: ``fg`` and ``bg`` are mIRC colors,
+#: 0 to 98, or None.
 Style = collections.namedtuple(
     'Style', ['bold', 'italic', 'underline', 'reverse', 'fg', 'bg'])
 
@@ -199,7 +199,7 @@ PLAIN = Style(False, False, False, False, None, None)
 
 
 def is_displayed(ucs):
-    """ Whether character ``ucs`` of text received may be displayed. """
+    """ Whether character ``ucs`` in text received may be displayed. """
     code = ord(ucs)
     return not (code < 0x20 or 0x7f <= code < 0xa0 or ucs in BIDI or
                 ucs in u'\u2028\u2029')
@@ -207,19 +207,19 @@ def is_displayed(ucs):
 
 def parse_formatting(text, base=PLAIN):
     """
-    Return ``text`` of IRC formatting as runs of ``(style, text)``.
+    Return ``text`` with IRC formatting as runs of ``(style, text)``.
 
-    Formatting begins of style ``base``, and a reset returns to it.  Other
-    control characters are discarded, such as of escape sequences, which
-    are then displayed as text; tabs are spaces.
+    Formatting begins in style ``base``, and a reset returns to it.  Other
+    control characters are discarded, such as those starting escape
+    sequences, which are then displayed as text; tabs are spaces.
     """
     return parse_styled(text, base, base)[0]
 
 
 def parse_styled(text, base, style):
     """
-    Return runs of ``text``, as :func:`parse_formatting`, beginning of
-    ``style``, and the style it ends of.
+    Return runs of ``text``, as :func:`parse_formatting`, beginning in
+    ``style``, and the style it ends in.
     """
     runs, chars = [], []
 
@@ -263,9 +263,9 @@ def parse_styled(text, base, style):
 
 def parse_color(value, default):
     """
-    Return color of formatting ``value``: a mIRC color, as a number of 2
-    digits or fewer, or of 6 hex digits, an rgb integer, beyond the mIRC
-    colors.  99 is the ``default``.
+    Return the color for formatting ``value``: a mIRC color, as a number
+    of 2 digits or fewer, or for 6 hex digits, an rgb integer, beyond the
+    mIRC colors.  99 is the ``default``.
     """
     if len(value) == 6:
         return 0x1000000 + int(value, 16)
@@ -274,7 +274,7 @@ def parse_color(value, default):
 
 
 def color_rgb(color):
-    """ Return rgb integer of ``color``, as of :func:`parse_color`. """
+    """ Return rgb integer for ``color``, as from :func:`parse_color`. """
     if color >= 0x1000000:
         return color - 0x1000000
     if color < 16:
@@ -283,27 +283,27 @@ def color_rgb(color):
 
 
 def nearest_mirc(rgb):
-    """ Return the mIRC color, of 0 to 15, nearest ``rgb``. """
+    """ Return the mIRC color, 0 to 15, nearest ``rgb``. """
     def distance(other):
         return sum((((rgb >> shift) & 0xff) - ((other >> shift) & 0xff)) ** 2
                    for shift in (16, 8, 0))
     return min(range(16), key=lambda idx: distance(MIRC_RGB[idx]))
 
 
-#: numbers of the terminal's colors, by name.
+#: the terminal's color numbers, by name.
 ANSI_COLORS = ('black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan',
                'white')
 
 
 def fg_sequence(term, name):
     """
-    Return sequence of the terminal displaying color ``name`` of text, of
+    Return the terminal sequence displaying text color ``name``, from
     :data:`MIRC_COLORS`.
 
-    A bright color is the terminal's own, of 16 colors or more; else it is
-    bold, as of an ansi terminal, as of a bbs; of others, such as of
-    xterm, of 8 colors by their terminfo, which may display bold of the
-    normal color, it is also of its own color, 90 to 97.
+    A bright color is the terminal's own, with 16 colors or more; else it
+    is bold, as on an ansi terminal, as at a bbs.  Others, such as xterm
+    with 8 colors by its terminfo, may display bold in the normal color,
+    so the bright color, 90 to 97, is sent too.
     """
     if not name.startswith('bold_'):
         return getattr(term, name)
@@ -317,7 +317,7 @@ def fg_sequence(term, name):
 
 
 def style_sequence(term, style):
-    """ Return sequence of the terminal displaying ``style``. """
+    """ Return the terminal sequence displaying ``style``. """
     parts = [term.normal]
     if style.bold:
         parts.append(term.bold)
@@ -332,7 +332,7 @@ def style_sequence(term, style):
         if style.fg < 16 or not rgb_ok:
             fg = (style.fg if style.fg < 16 else
                   nearest_mirc(color_rgb(style.fg)))
-            # black, of a terminal's black background, is dark gray.
+            # black, on a terminal's black background, is dark gray.
             if fg == 1 and style.bg is None:
                 fg = 14
             parts.append(fg_sequence(term, MIRC_COLORS[fg]))
@@ -342,7 +342,7 @@ def style_sequence(term, style):
         if style.bg < 16 or not rgb_ok:
             bg = (style.bg if style.bg < 16 else
                   nearest_mirc(color_rgb(style.bg)))
-            # the bright colors of a background are its normal ones.
+            # a bright background color is shown as its normal one.
             parts.append(getattr(term, 'on_' + MIRC_COLORS[bg].replace(
                 'bold_', '')))
         else:
@@ -351,7 +351,7 @@ def style_sequence(term, style):
 
 
 def rgb_tuple(rgb):
-    """ Return (red, green, blue) of rgb integer ``rgb``. """
+    """ Return (red, green, blue) for rgb integer ``rgb``. """
     return (rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff
 
 
@@ -362,11 +362,11 @@ def plain_text(runs):
 
 def fold_text(text, encoding):
     """
-    Return ``text`` as displayed by a terminal of ``encoding``.
+    Return ``text`` as displayed by a terminal using ``encoding``.
 
-    A character not of the encoding is of its letter, as of an accent
-    removed, or ``?``, as is written to the terminal, so that it may be
-    measured, one cell.  Text is as it is, of utf-8.
+    A character the encoding lacks becomes its letter without an accent,
+    or else ``?``, as is written to the terminal, so that it may be
+    measured as one cell.  Text is unchanged for utf-8.
     """
     if is_utf8(encoding):
         return text
@@ -396,7 +396,7 @@ def is_utf8(encoding):
 
 
 def slice_runs(runs, start, end):
-    """ Return the part of ``runs`` of text offsets ``start`` to ``end``. """
+    """ Return the part of ``runs`` from text offset ``start`` to ``end``. """
     result, pos = [], 0
     for style, text in runs:
         first, last = max(start, pos), min(end, pos + len(text))
@@ -426,7 +426,7 @@ def wrap_runs(runs, width):
 
 
 def render_runs(term, runs):
-    """ Return sequence displaying ``runs``, ending of normal style. """
+    """ Return sequence displaying ``runs``, ending in normal style. """
     return u''.join(style_sequence(term, style) + text
                     for style, text in runs) + term.normal
 
@@ -441,7 +441,7 @@ def fit_tail(text, width):
 
 
 def sanitize_nick(handle, max_length):
-    """ Return a nick of IRC, of user ``handle``. """
+    """ Return an IRC nick for user ``handle``. """
     text = unicodedata.normalize('NFKD', handle).encode(
         'ascii', 'ignore').decode('ascii')
     nick = u''.join(ucs if ucs.isalnum() or ucs in NICK_SPECIAL + u'-'
@@ -453,8 +453,8 @@ def sanitize_nick(handle, max_length):
 
 def nick_candidates(handle, max_length):
     """
-    Return nicks to try of user ``handle``, in order: of the handle, then
-    of ``_`` or a digit added, and the same of at most 9 characters, the
+    Return nicks to try for user ``handle``, in order: the handle, then
+    with ``_`` or a digit added, and the same cut to 9 characters, the
     least that servers allow.
     """
     result = []
@@ -469,10 +469,10 @@ def nick_candidates(handle, max_length):
 
 def split_message(text, limit=MESSAGE_BYTES):
     """
-    Return ``text`` split to messages of at most ``limit`` bytes of utf-8.
+    Return ``text`` split to messages of at most ``limit`` bytes in utf-8.
 
-    Messages are split at spaces, where they may be, else of characters,
-    but not within a color code.
+    Messages are split at spaces, where they may be, else between
+    characters, but not within a color code.
     """
     messages = []
     while len(text.encode('utf8')) > limit:
@@ -488,7 +488,7 @@ def split_message(text, limit=MESSAGE_BYTES):
         if space > 0:
             end = space
         else:
-            # a color code, of at most 6 characters, is not split.
+            # a color code, at most 6 characters, is not split.
             for start in range(max(0, end - 5), end):
                 if text[start] == u'\x03':
                     match = RE_COLOR.match(text, start + 1)
@@ -503,7 +503,7 @@ def split_message(text, limit=MESSAGE_BYTES):
 
 
 def mirc_encode(text):
-    """ Return ``text`` of pipe codes, such as ``|04``, as of mIRC codes. """
+    """ Return ``text`` with pipe codes, such as ``|04``, as mIRC codes. """
     def replace(match):
         value = match.group(1).lower()
         if value == 'bb':
@@ -521,7 +521,7 @@ def mirc_encode(text):
 
 
 def nick_color(nick):
-    """ Return the mIRC color of ``nick``, the same of each. """
+    """ Return the mIRC color for ``nick``, always the same for it. """
     return NICK_COLORS[zlib.crc32(nick.lower().encode('utf8')) %
                        len(NICK_COLORS)]
 
@@ -537,11 +537,11 @@ def mentions(text, nick):
 
 def fmt(template, *args):
     """
-    Return runs of ``template``, of IRC formatting, such as ``\\x02`` for
-    bold, its ``{}`` replaced by ``args``.
+    Return runs of ``template``, with IRC formatting, such as ``\\x02``
+    for bold, its ``{}`` replaced by ``args``.
 
-    An argument of text is of the style of the template where it is; one
-    of runs is as they are, such as of a nick, or of text received.
+    A text argument takes the template's style where it is; an argument
+    of runs is kept as it is, such as a nick, or text received.
     """
     runs, style = [], PLAIN
     for idx, part in enumerate(template.split(u'{}')):
@@ -557,25 +557,26 @@ def fmt(template, *args):
 
 
 def text_runs(text, style=PLAIN):
-    """ Return runs of ``text`` received, of its IRC formatting. """
+    """ Return runs of ``text`` received, by its IRC formatting. """
     return parse_formatting(text, style)
 
 
 def reason_runs(reason):
-    """ Return runs of `` (reason)``, of a quit or the like, if any. """
+    """ Return runs of `` (reason)``, for a quit or the like, if any. """
     return fmt(u' ({})', text_runs(reason)) if reason.strip() else []
 
 
 def nick_runs(nick, style=None):
-    """ Return runs of ``nick``, of its color. """
+    """ Return runs of ``nick``, in its color. """
     style = style or PLAIN._replace(fg=nick_color(nick))
     return [(style, u''.join(ucs for ucs in nick if is_displayed(ucs)))]
 
 
 def server_addresses(address):
     """
-    Return addresses of ``(host, port)``, of IPv4 first, as x/84 has
-    always connected by IPv4: some networks ban IPv6 ranges of hosting.
+    Return the addresses for ``(host, port)``, IPv4 first, as x/84 has
+    always connected by IPv4: some networks ban hosting providers' IPv6
+    ranges.
     """
     infos = socket.getaddrinfo(address[0], address[1],
                                type=socket.SOCK_STREAM)
@@ -583,9 +584,9 @@ def server_addresses(address):
 
 
 def connect_socket(address):
-    """ Return socket connected to ``(host, port)``, of the first address
+    """ Return socket connected to ``(host, port)``, at the first address
     that connects within ``CONNECT_TIMEOUT``. """
-    error = OSError('no address of {0}'.format(address[0]))
+    error = OSError('no address for {0}'.format(address[0]))
     for family, kind, proto, _, sockaddr in server_addresses(address):
         sock = socket.socket(family, kind, proto)
         sock.settimeout(CONNECT_TIMEOUT)
@@ -601,7 +602,7 @@ def connect_socket(address):
 
 class InputLine(object):
 
-    """ The line typed, with history of lines entered. """
+    """ The line typed, with a history of lines entered. """
 
     def __init__(self, max_length):
         self.text = u''
@@ -611,7 +612,7 @@ class InputLine(object):
 
     def keystroke(self, term, inp):
         """
-        Edit the line of keystroke ``inp``.
+        Edit the line by keystroke ``inp``.
 
         :returns: the line entered, by return; or whether the line changed.
         """
@@ -649,7 +650,7 @@ class InputLine(object):
 class ChatScreen(object):
 
     """
-    The screen of chat: messages, newest at the bottom, and the input line
+    The chat screen: messages, newest at the bottom, and the input line
     on the last row.
 
     New messages are written on the last row and scrolled up, as text is,
@@ -672,7 +673,7 @@ class ChatScreen(object):
 
     @property
     def height(self):
-        """ Rows of messages. """
+        """ Rows for messages. """
         return max(1, self.term.height - 1)
 
     def entry_rows(self, entry):
@@ -724,7 +725,7 @@ class ChatScreen(object):
             del self._output[:]
 
     def scroll(self, pages):
-        """ Scroll back by ``pages``, or forward, of a negative number. """
+        """ Scroll back by ``pages``, or forward, if negative. """
         most = max(0, len(self.rows) - self.height)
         offset = max(0, min(most, self.offset + pages * (self.height - 1)))
         if offset != self.offset:
@@ -763,12 +764,12 @@ class Connection(irc.client.ServerConnection):
 
     """ A connection to an IRC server, tolerant of what it receives. """
 
-    #: decode text of any encoding, rather than raising UnicodeDecodeError
-    #: for that not of utf-8.
+    #: decode text in any encoding, rather than raising UnicodeDecodeError
+    #: for text that is not utf-8.
     buffer_class = LenientDecodingLineBuffer
 
     def _handle_other(self, arguments, command, source, tags):
-        # a QUIT of no message raises IndexError (jaraco/irc#210).
+        # a QUIT with no message raises IndexError (jaraco/irc#210).
         if command == 'quit' and not arguments:
             arguments = [u'']
         return super()._handle_other(arguments, command, source, tags)
@@ -776,7 +777,7 @@ class Connection(irc.client.ServerConnection):
 
 class Reactor(irc.client.Reactor):
 
-    """ Reactor of :class:`Connection`. """
+    """ Reactor for :class:`Connection`. """
 
     connection_class = Connection
 
@@ -784,7 +785,7 @@ class Reactor(irc.client.Reactor):
 class IRCChat(object):
 
     """
-    IRC client of one channel, displaying events on a :class:`ChatScreen`.
+    IRC client for one channel, displaying events on a :class:`ChatScreen`.
 
     Events are handled by methods named ``on_<event>``, such as
     ``on_pubmsg``.  An error handling one is logged and displayed, rather
@@ -806,7 +807,7 @@ class IRCChat(object):
         self.channel = None
         self.joining = None
         self.registered = False
-        #: reason of disconnecting, once disconnected.
+        #: reason for disconnecting, once disconnected.
         self.closed = None
         self.quitting = False
         self.candidates = []
@@ -821,7 +822,7 @@ class IRCChat(object):
         self.screen.add([run for part in runs for run in part])
 
     def system(self, template, *args):
-        """ Display a message of the chat, of :func:`fmt`. """
+        """ Display a message from the chat, formatted by :func:`fmt`. """
         self.show(fmt(u'\x0314-*-\x0f '), fmt(template, *args))
 
     def update_prompt(self):
@@ -857,7 +858,7 @@ class IRCChat(object):
         return True
 
     def _connect(self):
-        """ Connect, of a thread, as the connection may take time. """
+        """ Connect, in a thread, as the connection may take time. """
         kwargs = {'connect_factory': self.open_socket}
         if SASL_USER and SASL_PASSWORD:
             kwargs.update(password=SASL_PASSWORD, sasl_login=SASL_USER)
@@ -875,7 +876,7 @@ class IRCChat(object):
 
     @staticmethod
     def open_socket(address):
-        """ Return socket connected to ``address``, of ssl when enabled. """
+        """ Return socket connected to ``address``, by ssl when enabled. """
         sock = connect_socket(address)
         try:
             if ENABLE_SSL:
@@ -1035,7 +1036,7 @@ class IRCChat(object):
                 (u'/names', u'list who is in this channel'),
                 (u'/whois nick', u'tell about a user'),
                 (u'/away [message]', u'mark yourself away, or back'),
-                (u'/colors', u'display pipe codes of colors'),
+                (u'/colors', u'display the pipe codes for colors'),
                 (u'/clear', u'clear the screen'),
                 (u'/quit [message]', u'leave the chat')):
             self.system(u'\x02{}\x02  {}', usage.ljust(19),
@@ -1132,13 +1133,13 @@ class IRCChat(object):
             self.connection.whois(rest.split()[0])
 
     def cmd_away(self, rest):
-        """ /away [message]: mark away, or back, of none. """
+        """ /away [message]: mark away, or back, without one. """
         if rest:
             self.connection.send_items(u'AWAY', u':' + rest)
         else:
             self.connection.send_items(u'AWAY')
 
-    # events of irc
+    # irc events
 
     def _dispatch(self, connection, event):
         """ Handle ``event`` by its method, should there be one. """
@@ -1200,12 +1201,12 @@ class IRCChat(object):
                         u'leave.', text_runs(self.closed))
 
     def on_error(self, _, event):
-        """ The server closes the connection, of ERROR. """
+        """ The server closes the connection, by ERROR. """
         self.system(u'\x0304Error:\x0f {}', text_runs(event.target or
                                                       self.arg(event, 0)))
 
     def on_error_reply(self, _, event):
-        """ A numeric reply of an error, such as no such nick. """
+        """ A numeric error reply, such as no such nick. """
         args = list(event.arguments)
         if args and args[0] == self.joining:
             self.joining = None
@@ -1279,13 +1280,13 @@ class IRCChat(object):
                         nick_runs(new))
 
     def on_mode(self, _, event):
-        """ Modes of the channel changed. """
+        """ The channel's modes changed. """
         if event.target == self.channel:
             self.system(u'{} sets mode {}.', nick_runs(event.source.nick),
                         text_runs(u' '.join(event.arguments)))
 
     def on_currenttopic(self, _, event):
-        """ The topic, of joining or asking. """
+        """ The topic, on joining or asking. """
         self.system(u'Topic of {}: {}', self.arg(event, 0),
                     text_runs(self.arg(event, 1)))
 
@@ -1300,11 +1301,11 @@ class IRCChat(object):
                     text_runs(self.arg(event, 0)))
 
     def on_namreply(self, _, event):
-        """ Nicks of a channel, of several replies. """
+        """ Nicks in a channel, over several replies. """
         self.names.extend(self.arg(event, 2).split())
 
     def on_endofnames(self, _, event):
-        """ The nicks of a channel, all of them. """
+        """ The nicks in a channel, all of them. """
         names, self.names = self.names, []
         rank = {u'~': 0, u'&': 1, u'@': 2, u'%': 3, u'+': 4}
         names.sort(key=lambda name: (rank.get(name[:1], 5), name.lower()))
@@ -1313,7 +1314,7 @@ class IRCChat(object):
                     u' '.join(names) or u'nobody')
 
     def on_pubmsg(self, _, event):
-        """ A message of a channel. """
+        """ A message to a channel. """
         text = self.arg(event, 0)
         runs = text_runs(text)
         style = PLAIN._replace(fg=nick_color(event.source.nick))
@@ -1330,23 +1331,23 @@ class IRCChat(object):
                   text_runs(self.arg(event, 0)))
 
     def on_action(self, _, event):
-        """ An action, of /me, of a channel or private. """
+        """ An action, by /me, to a channel or private. """
         private = u'' if irc.client.is_channel(event.target) else u'(private) '
         self.show(fmt(u'\x02*\x02 {}{} ', private,
                       nick_runs(event.source.nick)),
                   text_runs(self.arg(event, 0)))
 
     def on_pubnotice(self, _, event):
-        """ A notice of a channel. """
+        """ A notice to a channel. """
         self.show(fmt(u'\x0313-{}:{}-\x0f ', event.source.nick,
                       event.target),
                   text_runs(self.arg(event, 0)))
 
     def on_privnotice(self, _, event):
-        """ A notice to us, of a user, or of the server. """
+        """ A notice to us, from a user, or from the server. """
         source = event.source or u''
         if u'!' not in source:
-            # of the server, such as of connecting.
+            # from the server, such as while connecting.
             if ENABLE_PRIVNOTICE:
                 self.system(u'{}', text_runs(self.arg(event, 0)))
             return

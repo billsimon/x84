@@ -1,19 +1,19 @@
 """
 Multi Relay Chat (MRC) script for x/84.
 
-MRC is a chat of BBSes, of rooms, by the bbs's connection to the MRC
-server, of section ``[mrc]`` (see :mod:`x84.mrc`).  The screen is the
+MRC is a chat between BBSes, in rooms, by the bbs's connection to the MRC
+server, set in section ``[mrc]`` (see :mod:`x84.mrc`).  The screen is the
 room's name and topic on the top row, its messages below them, newest at
-the bottom, and the input line on the last row: type to say something,
-or a command, such as ``/?`` for those of this client, or ``/help`` for
-those of the server.  Page Up and Page Down scroll back through messages,
-Left and Right change the color of what you say, and Tab completes a
-nick.
+the bottom, and the input line on the last row: type to say something, or
+a command, such as ``/?`` for this client's commands, or ``/help`` for
+the server's.  Page Up and Page Down scroll back through messages, Left
+and Right change the color of what you say, and Tab completes a nick.
 
 Messages are colored by pipe codes, such as ``|04``; any control
-character of a message, such as of an escape sequence, is discarded.
+character in a message, such as one starting an escape sequence, is
+discarded.
 
-Options of section ``[mrc]``, besides those of the connection:
+Options in section ``[mrc]``, besides those for the connection:
 
 - ``room``: the room first joined, ``lobby``; a user may choose their own
   by ``/set defaultroom``.
@@ -39,7 +39,7 @@ from common import declare_label
 #: :meth:`x84.bbs.session.Session.runscript`.
 IDLE_TIMEOUT = False
 
-#: how many messages of scrollback to keep.
+#: how many messages to keep for scrollback.
 MAX_SCROLLBACK = get_ini('mrc', 'max_scrollback', getter='getint') or 200
 
 #: the room first joined.
@@ -48,38 +48,38 @@ DEFAULT_ROOM = get_ini('mrc', 'room') or u'lobby'
 #: the longest line typed: a line longer than a message is sent as several.
 MAX_INPUT = 1000
 
-#: the longest text of a message, as of other clients.
+#: the longest text in a message, as other clients send.
 MAX_MESSAGE = 140
 
-#: the longest packet, of the protocol.
+#: the longest packet the protocol allows.
 MAX_PACKET = 255
 
-#: longest name of a room, and topic.
+#: longest room name, and topic.
 MAX_ROOM = 20
 MAX_TOPIC = 55
 
-#: the room of CTCP requests and replies.
+#: the room for CTCP requests and replies.
 CTCP_ROOM = u'ctcp_echo_channel'
 
-#: seconds between requests of the room's users, between telling the
-#: server the user is here, and between requests of latency.
+#: seconds between requests for the room's users, between telling the
+#: server the user is here, and between requests for latency.
 USERLIST_INTERVAL = 20
 ALIVE_INTERVAL = 120
 LATENCY_INTERVAL = 10
 
-#: cells of the time that begins each message.
+#: cells taken by the time that begins each message.
 INDENT = 6
 
-#: terminal colors of the pipe colors of DOS, 0 to 7.
+#: terminal colors for the DOS pipe colors, 0 to 7.
 DOS_ANSI = (0, 4, 2, 6, 1, 5, 3, 7)
 
-#: commands of the server, of which the second word is a password.
+#: server commands whose second word is a password.
 MASKED = {u'/identify': 1, u'/register': 1, u'/roompass': 1,
           u'/update': 2, u'/roomconfig': 2}
 
 RE_PIPE = re.compile(r'\|([0-9]{2})')
 
-#: characters of direction, which would reorder the screen.
+#: direction characters, which would reorder the screen.
 BIDI = frozenset(chr(code) for code in (
     0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e,
     0x2066, 0x2067, 0x2068, 0x2069))
@@ -96,12 +96,12 @@ PREFERENCES = collections.OrderedDict((
     ('leaveroom', u'|07- |02%1 |10has left the room.'),
 ))
 
-#: what each preference is, of /set.
+#: what each preference is, as /set lists it.
 PREFERENCE_HELP = {
     'defaultroom': u'the room joined on entering chat',
-    'nickcolor': u'the pipe code of the color of your nick',
-    'ltbracket': u'the bracket left of your nick, of pipe codes',
-    'rtbracket': u'the bracket right of your nick, of pipe codes',
+    'nickcolor': u'your nick\'s color, as a pipe code',
+    'ltbracket': u'the bracket left of your nick; allows pipe codes',
+    'rtbracket': u'the bracket right of your nick; allows pipe codes',
     'enterchat': u'told others as you enter chat; %1 is your nick',
     'leavechat': u'told others as you leave chat',
     'enterroom': u'told a room as you enter it',
@@ -115,7 +115,7 @@ PLAIN = Style(None, None)
 
 
 def is_displayed(ucs):
-    """ Whether character ``ucs`` of text received may be displayed. """
+    """ Whether character ``ucs`` in text received may be displayed. """
     code = ord(ucs)
     return not (code < 0x20 or 0x7f <= code < 0xa0 or ucs in BIDI or
                 code in (0x2028, 0x2029))
@@ -123,9 +123,9 @@ def is_displayed(ucs):
 
 def parse_pipes(text, style=PLAIN):
     """
-    Return runs of ``(style, text)`` of ``text`` colored by pipe codes:
-    ``|00`` to ``|15`` are colors of text, ``|16`` to ``|23`` of its
-    background, and ``|24`` to ``|31`` those of a bright background.
+    Return runs of ``(style, text)`` for ``text`` colored by pipe codes:
+    ``|00`` to ``|15`` are text colors, ``|16`` to ``|23`` background
+    colors, and ``|24`` to ``|31`` bright background colors.
     """
     runs, pos = [], 0
     for match in RE_PIPE.finditer(text):
@@ -145,7 +145,7 @@ def parse_pipes(text, style=PLAIN):
 
 
 def style_sequence(term, style):
-    """ Return sequence of the terminal displaying ``style``. """
+    """ Return the terminal sequence displaying ``style``. """
     parts = [term.normal]
     fg, bg = style
     if fg is not None:
@@ -155,9 +155,9 @@ def style_sequence(term, style):
         elif term.number_of_colors >= 16:
             parts.append(term.color(color + 8))
         else:
-            # bright, as of an ansi terminal, by bold; and of the bright
-            # color of most others, of 8 colors by their terminfo, such as
-            # xterm-color, which display bold of the normal color.
+            # an ansi terminal shows bright by bold.  Most others with 8
+            # colors by their terminfo, such as xterm-color, show bold in
+            # the normal color, so the bright color is sent too.
             parts.extend((term.bold, term.color(color)))
             if not (term.kind or u'').startswith('ansi'):
                 parts.append(u'\x1b[{0}m'.format(90 + color))
@@ -168,7 +168,7 @@ def style_sequence(term, style):
 
 def is_hidden(style):
     """
-    Whether text of ``style`` is hidden: black, of a black background, as
+    Whether text in ``style`` is hidden: black on a black background, as
     some servers and clients write in place of spaces they would lose.
     """
     return style.fg == 0 and not style.bg
@@ -189,11 +189,11 @@ def is_utf8(encoding):
 
 def fold_text(text, encoding):
     """
-    Return ``text`` as displayed by a terminal of ``encoding``.
+    Return ``text`` as displayed by a terminal using ``encoding``.
 
-    A character not of the encoding is of its letter, as of an accent
-    removed, or ``?``, as is written to the terminal, so that it may be
-    measured, one cell.  Text is as it is, of utf-8.
+    A character the encoding lacks becomes its letter without an accent,
+    or else ``?``, as is written to the terminal, so that it may be
+    measured as one cell.  Text is unchanged for utf-8.
     """
     if is_utf8(encoding):
         return text
@@ -215,7 +215,7 @@ def fold_text(text, encoding):
 
 
 def slice_runs(runs, start, end):
-    """ Return the part of ``runs`` of text offsets ``start`` to ``end``. """
+    """ Return the part of ``runs`` from text offset ``start`` to ``end``. """
     result, pos = [], 0
     for style, text in runs:
         first, last = max(start, pos), min(end, pos + len(text))
@@ -245,7 +245,7 @@ def wrap_runs(runs, width):
 
 
 def render_runs(term, runs):
-    """ Return sequence displaying ``runs``, ending of normal style. """
+    """ Return sequence displaying ``runs``, ending in normal style. """
     return u''.join(style_sequence(term, style) + text
                     for style, text in runs) + term.normal
 
@@ -277,7 +277,7 @@ def fit_runs(runs, width):
 
 
 def mask_input(text):
-    """ Return ``text`` typed, of its password masked, of :data:`MASKED`. """
+    """ Return ``text`` typed, its password masked, by :data:`MASKED`. """
     words = text.split(u' ')
     idx = MASKED.get(words[0].lower())
     if idx == 2 and (len(words) < 2 or words[1].lower() != u'password'):
@@ -290,8 +290,8 @@ def mask_input(text):
 def split_message(text, limit):
     """
     Return ``text`` as messages of at most ``limit`` characters, split
-    between words, or within a word longer, but not within a pipe code.
-    A message continues the colors of pipe codes of the one before it.
+    between words, or within a longer word, but not within a pipe code.
+    A message continues the pipe code colors of the one before it.
     """
     messages, colors = [], u''
     text = text.strip()
@@ -329,19 +329,19 @@ def mentions(body, nick):
 
 
 def room_name(text):
-    """ Return name of room ``text``, as of the protocol. """
+    """ Return room name ``text`` as the protocol has it. """
     return name_tag(text.strip().lstrip(u'#')).lower()
 
 
 def expand(template, nick, new_room=u'', old_room=u''):
-    """ Return message ``template`` of /set, of its nick and rooms. """
+    """ Return message ``template`` from /set, with its nick and rooms. """
     return (template.replace(u'%1', nick).replace(u'%2', u'')
             .replace(u'%3', u'#' + new_room).replace(u'%4', u'#' + old_room))
 
 
 class InputLine(object):
 
-    """ The line typed, with history of lines entered. """
+    """ The line typed, with a history of lines entered. """
 
     def __init__(self, max_length):
         self.text = u''
@@ -351,7 +351,7 @@ class InputLine(object):
 
     def keystroke(self, term, inp):
         """
-        Edit the line of keystroke ``inp``.
+        Edit the line by keystroke ``inp``.
 
         :returns: the line entered, by return; or whether the line changed.
         """
@@ -389,7 +389,7 @@ class InputLine(object):
 class ChatScreen(object):
 
     """
-    The screen of chat: the room on the top row, messages below it, newest
+    The chat screen: the room on the top row, messages below it, newest
     at the bottom, and the input line on the last row.
 
     New messages are written on the last row and scrolled up, as text is,
@@ -410,14 +410,14 @@ class ChatScreen(object):
         self.prompt = u''
         self.prompt_style = None
         self.text_style = PLAIN
-        #: runs of the top row, and of its right end.
+        #: runs for the top row, and text for its right end.
         self.title = []
         self.status = u''
         self._output = []
 
     @property
     def height(self):
-        """ Rows of messages. """
+        """ Rows for messages. """
         return max(1, self.term.height - 2)
 
     def entry_rows(self, entry):
@@ -440,7 +440,7 @@ class ChatScreen(object):
         self.offset = 0
 
     def add(self, runs, mark=False):
-        """ Add a message of ``runs``, its time marked, of a mention. """
+        """ Add a message of ``runs``, its time marked for a mention. """
         runs = [(PLAIN, u' ' * text_width(text)) if is_hidden(style)
                 else (style, fold_text(text, self.encoding))
                 for style, text in runs]
@@ -471,7 +471,7 @@ class ChatScreen(object):
             del self._output[:]
 
     def scroll(self, pages):
-        """ Scroll back by ``pages``, or forward, of a negative number. """
+        """ Scroll back by ``pages``, or forward, if negative. """
         most = max(0, len(self.rows) - self.height)
         offset = max(0, min(most, self.offset + pages * (self.height - 1)))
         if offset != self.offset:
@@ -526,10 +526,10 @@ class ChatScreen(object):
 class MRCChat(object):
 
     """
-    Client of MRC, of the bbs's relay, displaying a room on a
+    MRC client, by the bbs's relay, displaying a room on a
     :class:`ChatScreen`.
 
-    Packets are passed by events ``mrc`` of the engine; see :mod:`x84.mrc`.
+    Packets are passed by the engine's events ``mrc``; see :mod:`x84.mrc`.
     """
 
     # pylint: disable=R0902,R0904
@@ -562,15 +562,15 @@ class MRCChat(object):
     # display
 
     def show(self, body, mark=False):
-        """ Display message ``body``, of pipe codes. """
+        """ Display message ``body``, colored by its pipe codes. """
         self.screen.add(parse_pipes(body), mark)
 
     def show_literal(self, *runs):
-        """ Display a message of ``runs``, of pipe codes displayed. """
+        """ Display a message of ``runs``, its pipe codes shown as typed. """
         self.screen.add(list(runs))
 
     def system(self, text):
-        """ Display a message of this client. """
+        """ Display a message from this client. """
         self.show(u'|15* |11' + text)
 
     def error(self, text):
@@ -578,7 +578,7 @@ class MRCChat(object):
         self.show(u'|15! |12' + text)
 
     def update_top(self):
-        """ Update the top row and prompt, of the room. """
+        """ Update the top row and prompt for the room. """
         room = u'#' + self.room if self.room else u'MRC'
         self.screen.title = ([(Style(11, None), room)] +
                              ([(PLAIN, u'  ')] + parse_pipes(
@@ -606,7 +606,7 @@ class MRCChat(object):
 
     @staticmethod
     def direct_target(text):
-        """ The user of a direct message being typed, or None. """
+        """ The user a direct message being typed is for, or None. """
         words = text.split(u' ')
         if len(words) > 2 and words[0].lower() in (
                 u'/t', u'/tell', u'/m', u'/msg', u'/pm'):
@@ -623,9 +623,9 @@ class MRCChat(object):
 
     def say(self, to_user, to_room, prefix, text):
         """
-        Send ``text`` to ``to_user`` or ``to_room``, each message of it
-        begun by ``prefix``: of several messages, of a text longer than
-        one, or than its packet may be.
+        Send ``text`` to ``to_user`` or ``to_room``, each message begun by
+        ``prefix``: several messages, when the text is longer than one
+        message, or than its packet may hold.
         """
         empty = format_packet(Packet(self.nick, self.site, self.room,
                                      to_user, u'', to_room, prefix))
@@ -634,7 +634,7 @@ class MRCChat(object):
             self.send(to_user, u'', to_room, prefix + message)
 
     def send(self, to_user, msg_ext, to_room, body, from_room=None):
-        """ Send packet of ``body``, from this user. """
+        """ Send a packet with ``body``, from this user. """
         packet = Packet(self.nick, self.site,
                         self.room if from_room is None else from_room,
                         to_user, msg_ext, to_room, body)
@@ -662,7 +662,7 @@ class MRCChat(object):
         self.send(u'CLIENT', self.site, self.room, body)
 
     def send_ctcp(self, to_user, kind, text):
-        """ Send CTCP ``kind`` of ``text`` to ``to_user``. """
+        """ Send CTCP ``kind`` with ``text`` to ``to_user``. """
         self.send(to_user, u'', CTCP_ROOM, u'{0} {1} {2}'.format(
             kind, self.nick, text), from_room=CTCP_ROOM)
 
@@ -673,13 +673,14 @@ class MRCChat(object):
         if self.nick.upper() in RESERVED or not self.nick:
             self.error(u'Your handle may not be used on MRC.')
             return False
-        # what remains of a chat before, as of a disconnected relay.
+        # discard what remains from an earlier chat, such as a relay's
+        # disconnection.
         self.session.flush_event('mrc')
         self.session.send_event('mrc', ('join', self.nick))
         self.joined = True
-        self.system(u'Welcome to Multi Relay Chat, a chat of BBSes.')
-        self.system(u'Type |15/? |11for commands, |15/help |11for those of '
-                    u'the server, and |15/quit |11to leave.')
+        self.system(u'Welcome to Multi Relay Chat, a chat between BBSes.')
+        self.system(u'Type |15/? |11for commands, |15/help |11for the '
+                    u'server\'s commands, and |15/quit |11to leave.')
         event, data = self.session.read_events(('mrc',), timeout=10)
         if event is None:
             self.error(u'The bbs did not answer.')
@@ -712,7 +713,7 @@ class MRCChat(object):
                        'latency': now + LATENCY_INTERVAL}
 
     def leave(self, message=u''):
-        """ Leave chat, of a quit ``message``. """
+        """ Leave chat, with a quit ``message``. """
         if not self.joined:
             return
         self.joined = False
@@ -744,7 +745,7 @@ class MRCChat(object):
             user['mrc_twits'] = self.twits
 
     def join_room(self, room, announce=True):
-        """ Move to ``room``, telling the rooms of it, of ``announce``. """
+        """ Move to ``room``, telling both rooms when ``announce``. """
         old = self.room
         self.send_server(u'NEWROOM:{0}:{1}'.format(old, room))
         if announce:
@@ -838,7 +839,7 @@ class MRCChat(object):
         return True
 
     def complete_nick(self):
-        """ Complete the nick of the last word typed, of the room's users. """
+        """ Complete the last word typed as a nick of the room's users. """
         text = self.screen.input.text
         if self.completion is None:
             head, _, word = text.rpartition(u' ')
@@ -858,7 +859,7 @@ class MRCChat(object):
     # received
 
     def handle_event(self, data):
-        """ Handle event ``mrc`` of the engine. """
+        """ Handle event ``mrc`` from the engine. """
         kind, value = data[0], data[1]
         if kind == 'status':
             self.handle_status(value)
@@ -887,7 +888,7 @@ class MRCChat(object):
             self.error(u'MRC is not available.')
 
     def handle_packet(self, line):
-        """ Handle packet ``line`` of the server. """
+        """ Handle packet ``line`` from the server. """
         packet = parse_packet(line)
         if packet is None:
             return
@@ -921,7 +922,7 @@ class MRCChat(object):
             self.users.append(packet.from_user)
 
     def server_command(self, body):
-        """ Handle ``body`` of the server, if it is a command of it. """
+        """ Handle ``body`` from the server, if it is a server command. """
         keyword, _, value = body.partition(u':')
         if keyword == u'ROOMTOPIC':
             room, _, topic = value.partition(u':')
@@ -984,8 +985,8 @@ class MRCChat(object):
         if not line.strip():
             return True
         if strip_pipes(line).startswith(u'/'):
-            # the command is of its name without pipe codes, as typed of
-            # the color of text; what follows it keeps them.
+            # the command name is matched without pipe codes, as it is
+            # typed in the text color; what follows it keeps them.
             name = strip_pipes(line)[1:].partition(u' ')[0].lower()
             rest = line.lstrip().partition(u' ')[2].strip()
             if name in (u'q', u'quit', u'exit'):
@@ -1014,7 +1015,7 @@ class MRCChat(object):
         return True
 
     def cmd_local_help(self, _):
-        """ /?: display commands of this client. """
+        """ /?: display the commands this client handles. """
         for usage, text in (
                 (u'/join room', u'move to a room'),
                 (u'/me action', u'describe what you are doing'),
@@ -1024,11 +1025,11 @@ class MRCChat(object):
                 (u'/topic text', u'change the topic of the room'),
                 (u'/rooms', u'list the rooms'),
                 (u'/bbses', u'list the BBSes connected'),
-                (u'/ctcp target command', u'VERSION, TIME, PING, of a user, '
-                                          u'#room or *'),
+                (u'/ctcp target command', u'send VERSION, TIME or PING to a '
+                                          u'user, #room or *'),
                 (u'/twit add|del user', u'ignore a user, or /twit list'),
                 (u'/set', u'list your settings, such as your nick color'),
-                (u'/colors', u'display pipe codes of colors'),
+                (u'/colors', u'display the pipe codes for colors'),
                 (u'/clear', u'clear the screen'),
                 (u'/quit [message]', u'leave the chat')):
             self.show(u'|15* |15{0}|07{1}'.format(usage.ljust(22), text))
@@ -1039,7 +1040,7 @@ class MRCChat(object):
                     u'completes a nick.')
 
     def cmd_colors(self, _):
-        """ /colors: display pipe codes of colors. """
+        """ /colors: display the pipe codes for colors. """
         self.system(u'Color what you say by pipe codes:')
         self.show_literal(*[(Style(num, None), u'|{0:02d} '.format(num))
                             for num in range(1, 16)])
@@ -1182,7 +1183,7 @@ class MRCChat(object):
                 return
         elif name == u'nickcolor':
             if not re.match(r'^\|(0[1-9]|1[0-5])$', value):
-                self.error(u'A nick\'s color is a pipe code, of 01 to 15.')
+                self.error(u'A nick\'s color is a pipe code, 01 to 15.')
                 return
         elif name == u'ltbracket':
             if len(visible) != 1 or visible == u' ':
