@@ -70,7 +70,8 @@ All of section ``[modem]``:
 - ``addr``, ``port``: where to listen, ``127.0.0.1`` and ``6510``.
 - ``secret``: when set, the bridge must send the same value.
 - ``term``: terminal type of modem callers, ``ansi``.  A modem tells the
-  far end nothing about its terminal, which is assumed to be 80 x 24.
+  far end nothing about its terminal: its size is asked of the terminal
+  (see below), and is otherwise assumed to be 80 x 24.
 - ``encoding``: character encoding of modem callers, ``cp437``.
 - ``art_min_rate``: artwork is not displayed to callers connected at a
   lower bit rate than this, ``2400`` by default; ``0`` always displays it.
@@ -78,8 +79,8 @@ All of section ``[modem]``:
   draw at 1200 bps.
 
 Modem callers begin at script ``matrix_modem`` (option ``script_modem`` of
-section ``[matrix]``), which tells the caller the rate they connected at,
-then continues to the ordinary login.
+section ``[matrix]``), which asks the caller's terminal its size, tells the
+caller the rate they connected at, then continues to the ordinary login.
 
 In scripts
 ==========
@@ -96,6 +97,10 @@ environment, ``session.env``, describes the call:
 
 The caller ID is part of the session's id, such as
 ``modem-+15551234:57412``, as shown by Who's Online and the logs.
+
+:func:`x84.bbs.output.measure_screen` asks the terminal its size, by
+moving the cursor as far down and right as it goes and asking where it is,
+and sets ``term.height`` and ``term.width`` to the answer.
 
 :func:`x84.bbs.output.slow_modem_rate` returns the rate of a caller too
 slow for artwork, or 0; :func:`~x84.bbs.output.showart` skips artwork for

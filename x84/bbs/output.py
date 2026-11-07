@@ -265,6 +265,36 @@ def slow_modem_rate():
     return rate if 0 < rate < min_rate else 0
 
 
+def measure_screen(timeout=2):
+    """
+    Ask the terminal its size, and use it: return ``(rows, columns)``.
+
+    For a caller whose connection does not tell the size of their screen,
+    such as a modem (see :mod:`x84.modem`), which is otherwise thought to be
+    80 x 24.  Scripts clear and lay out the screen by ``term.height`` and
+    ``term.width``: a taller screen keeps what was on it, under what is
+    drawn next.
+
+    The cursor is moved as far down and right as the terminal allows, and
+    the terminal is asked where it is.  When it answers within ``timeout``
+    seconds, the session's terminal takes that size; otherwise, it is
+    unchanged.  The cursor is returned to where it was.
+    """
+    term = getterminal()
+    echo(term.save + term.move(998, 998))
+    row, column = term.get_location(timeout=timeout)
+    echo(term.restore)
+    rows, columns = row + 1, column + 1
+    if not (0 < rows < 256 and 0 < columns < 256):
+        # no answer, or a terminal that did not stop the cursor at its edge.
+        return term.height, term.width
+    if (rows, columns) != (term.height, term.width):
+        logging.getLogger(__name__).info(
+            'screen measured {0}x{1}'.format(columns, rows))
+        term._rows, term._columns = rows, columns
+    return rows, columns
+
+
 def showart(filepattern, encoding=None, auto_mode=True, center=False,
             poll_cancel=False, msg_cancel=None, force=False):
     """

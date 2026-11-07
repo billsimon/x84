@@ -118,6 +118,38 @@ def test_showart_skipped_at_slow_rate(modem_session, tmp_path):
     assert u'█' in u''.join(showart(str(artfile)))
 
 
+# -- screen size
+
+def test_measure_screen(modem_session):
+    from x84.bbs.output import measure_screen
+    # the terminal's answer: its cursor stopped at row 48, column 80.
+    modem_session.keys(u'\x1b[48;80R')
+    assert measure_screen() == (48, 80)
+    term = modem_session.term
+    assert (term.height, term.width) == (48, 80)
+    output = modem_session.output()
+    assert output.index(term.move(998, 998)) < output.index(u'\x1b[6n')
+    assert output.endswith(term.restore)
+
+
+def test_measure_screen_keeps_typed_keys(modem_session):
+    from x84.bbs.output import measure_screen
+    modem_session.keys(u'x\x1b[25;80R')
+    assert measure_screen() == (25, 80)
+    assert modem_session.term.inkey(0) == u'x'
+
+
+@pytest.mark.parametrize('answer', [u'', u'\x1b[999;999R'])
+def test_measure_screen_unanswered(modem_session, answer):
+    # no answer, or a terminal that does not stop the cursor at its edge.
+    from x84.bbs.output import measure_screen
+    if answer:
+        modem_session.keys(answer)
+    assert measure_screen(timeout=0.1) == (24, 80)
+    term = modem_session.term
+    assert (term.height, term.width) == (24, 80)
+
+
 # -- engine
 
 class FakeClient(object):

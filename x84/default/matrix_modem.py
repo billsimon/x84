@@ -3,8 +3,9 @@ Modem matrix (login) script for x/84.
 
 This script is the session entry point for dial-in modem callers (see
 :mod:`x84.modem`), configured by option ``script_modem`` of section
-``[matrix]``.  It tells the caller what they connected at, then hands over
-to the ordinary login, ``script`` of section ``[matrix]``.
+``[matrix]``.  It asks the caller's terminal its size, tells the caller what
+they connected at, then hands over to the ordinary login, ``script`` of
+section ``[matrix]``.
 
 The session environment describes the call:
 
@@ -19,10 +20,12 @@ The session environment describes the call:
 def main():
     """ Main procedure. """
     from x84.bbs import getsession, getterminal, echo, goto, get_ini
-    from x84.bbs.output import slow_modem_rate
+    from x84.bbs.output import slow_modem_rate, measure_screen
 
     session, term = getsession(), getterminal()
     session.activity = u'dialling in'
+    # a modem does not tell the size of the caller's screen: ask it.
+    measure_screen()
     bbsname = get_ini('system', 'bbsname') or 'x/84'
     connect = session.env.get('CONNECT') or session.env.get('MODEM_RATE')
 
